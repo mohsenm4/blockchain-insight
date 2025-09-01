@@ -1,9 +1,7 @@
 package main
 
-import (
-	"fmt"
-)
+import "github.com/Mohsen20031203/blockchain-insight/internal/enthblock"
 
 func main() {
-	fmt.Println("Hello, World!")
+	enthblock.NewClient("https://your-rpc-url")
 }
