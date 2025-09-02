@@ -5,6 +5,7 @@ import (
 
 	"github.com/Mohsen20031203/blockchain-insight/config"
 	"github.com/Mohsen20031203/blockchain-insight/internal/enthblock"
+	"github.com/Mohsen20031203/blockchain-insight/internal/utils"
 )
 
 func main() {
@@ -17,5 +18,11 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	_ = client
+
+	balance, err := enthblock.GetBalance(client, "0x742d35Cc6634C0532925a3b844Bc454e4438f44e")
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("Balance: %s", utils.WeiToEther(balance))
+
 }
