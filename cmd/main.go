@@ -4,7 +4,7 @@ import (
 	"log"
 
 	"github.com/Mohsen20031203/blockchain-insight/config"
-	"github.com/Mohsen20031203/blockchain-insight/internal/enthblock"
+	"github.com/Mohsen20031203/blockchain-insight/internal/api"
 )
 
 func main() {
@@ -13,10 +13,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	client, err := enthblock.NewClient(config.RPCURL)
-	if err != nil {
-		log.Fatal(err)
-	}
 
-	_ = client
+	server := api.NewServer(config)
+	_ = server
 }
