@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/Mohsen20031203/blockchain-insight/internal/models"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
 )
 
@@ -27,6 +28,19 @@ func GetBlockByNumber(client *ethclient.Client, blockNumber uint64) (*models.Blo
 		Hash:         block.Hash().Hex(),
 		TxCount:      len(block.Transactions()),
 		Timestamp:    block.Time(),
-		Transactions: nil,
+		Transactions: convertTxs(block.Transactions()),
 	}, nil
+}
+
+func convertTxs(txs types.Transactions) []models.Transaction {
+	var result []models.Transaction
+	for _, tx := range txs {
+		result = append(result, models.Transaction{
+			Hash:  tx.Hash().Hex(),
+			Value: tx.Value().String(),
+			From:  "",
+			To:    "",
+		})
+	}
+	return result
 }
