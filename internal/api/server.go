@@ -27,3 +27,13 @@ func NewServer(config config.Config) *Server {
 		config: config,
 	}
 }
+
+func (s *Server) setupRouter() {
+	router := gin.Default()
+
+	s.router = router
+}
+
+func (s *Server) start(addr string) error {
+	return s.router.Run(addr)
+}
