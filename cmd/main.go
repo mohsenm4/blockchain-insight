@@ -25,4 +25,10 @@ func main() {
 	}
 	log.Printf("Balance: %s", utils.WeiToEther(balance))
 
+	latestBlock, err := enthblock.GetLatestBlockNumber(client)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("Latest Block: %d", latestBlock)
+
 }
