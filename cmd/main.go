@@ -16,7 +16,7 @@ func main() {
 
 	server := api.NewServer(config)
 
-	if err := server.Start(":8080"); err != nil {
+	if err := server.Start(":5050"); err != nil {
 		log.Fatal(err)
 	}
 }

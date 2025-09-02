@@ -6,6 +6,7 @@ import (
 	"github.com/Mohsen20031203/blockchain-insight/config"
 	"github.com/Mohsen20031203/blockchain-insight/internal/enthblock"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
 )
 
@@ -35,6 +36,8 @@ func NewServer(config config.Config) *Server {
 func (s *Server) setupRouter() {
 	router := gin.Default()
 
+	router.Use(gzip.Gzip(gzip.DefaultCompression))
+	router.GET("/last/block/:address", s.LatestBlockNumber)
 	s.router = router
 }
 
