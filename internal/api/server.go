@@ -37,7 +37,9 @@ func (s *Server) setupRouter() {
 	router := gin.Default()
 
 	router.Use(gzip.Gzip(gzip.DefaultCompression))
-	router.GET("/last/block/:address", s.LatestBlockNumber)
+	router.GET("/balace/:address", s.GetAddressBalance)
+	router.GET("/block/:id", s.GetBlockById)
+	router.GET("/last/block/", s.GetLastBlock)
 	s.router = router
 }
 

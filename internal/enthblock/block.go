@@ -35,11 +35,25 @@ func GetBlockByNumber(client *ethclient.Client, blockNumber uint64) (*models.Blo
 func convertTxs(txs types.Transactions) []models.Transaction {
 	var result []models.Transaction
 	for _, tx := range txs {
+		to := ""
+		if tx.To() != nil {
+			to = tx.To().Hex()
+		}
+
+		from := ""
+		signer := types.LatestSignerForChainID(tx.ChainId())
+		sender, err := types.Sender(signer, tx)
+		if err == nil {
+			from = sender.Hex()
+		}
+
+		value := tx.Value().String()
 		result = append(result, models.Transaction{
-			Hash:  tx.Hash().Hex(),
-			Value: tx.Value().String(),
-			From:  "",
-			To:    "",
+			Hash:   tx.Hash().Hex(),
+			Value:  value,
+			From:   from,
+			To:     to,
+			GasFee: tx.GasPrice().String(),
 		})
 	}
 	return result
