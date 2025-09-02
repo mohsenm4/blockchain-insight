@@ -22,10 +22,14 @@ func NewServer(config config.Config) *Server {
 		log.Fatal(err)
 	}
 
-	return &Server{
+	server := &Server{
 		client: client,
 		config: config,
 	}
+
+	server.setupRouter()
+	return server
+
 }
 
 func (s *Server) setupRouter() {
@@ -34,6 +38,6 @@ func (s *Server) setupRouter() {
 	s.router = router
 }
 
-func (s *Server) start(addr string) error {
+func (s *Server) Start(addr string) error {
 	return s.router.Run(addr)
 }
