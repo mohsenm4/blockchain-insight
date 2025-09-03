@@ -118,7 +118,7 @@ paths:
             additionalProperties:
               type: string
             type: object
-      summary: Get the latest block
+      summary: Get the last block
       tags:
       - block
 swagger: "2.0"

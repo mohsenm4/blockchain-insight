@@ -121,7 +121,7 @@ const docTemplate = `{
                 "tags": [
                     "block"
                 ],
-                "summary": "Get the latest block",
+                "summary": "Get the last block",
                 "responses": {
                     "200": {
                         "description": "OK",
