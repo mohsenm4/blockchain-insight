@@ -55,7 +55,7 @@ func (s *Server) GetBlockById(c *gin.Context) {
 }
 
 // GetLastBlock godoc
-// @Summary      Get the latest block
+// @Summary      Get the last block
 // @Description  Returns the most recent block information from the blockchain
 // @Tags         block
 // @Accept       json
