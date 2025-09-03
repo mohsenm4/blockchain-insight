@@ -1,0 +1,124 @@
+definitions:
+  models.Block:
+    properties:
+      hash:
+        type: string
+      miner:
+        type: string
+      number:
+        format: int64
+        type: integer
+      timestamp:
+        format: int64
+        type: integer
+      transactions:
+        items:
+          $ref: '#/definitions/models.Transaction'
+        type: array
+      txCount:
+        type: integer
+    type: object
+  models.Transaction:
+    properties:
+      from:
+        type: string
+      gas_fee:
+        type: string
+      hash:
+        type: string
+      time:
+        type: string
+      to:
+        type: string
+      value:
+        type: string
+    type: object
+info:
+  contact: {}
+  title: Blockchain Insight API
+  version: "1.0"
+paths:
+  /balace/{address}:
+    get:
+      consumes:
+      - application/json
+      description: Returns the balance of a given blockchain address
+      parameters:
+      - description: Blockchain address
+        in: path
+        name: address
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get balance of an address
+      tags:
+      - block
+  /block/{id}:
+    get:
+      consumes:
+      - application/json
+      description: Returns the block information for the given block number
+      parameters:
+      - description: Block number
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Block'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get block by number
+      tags:
+      - block
+  /last/block:
+    get:
+      consumes:
+      - application/json
+      description: Returns the most recent block information from the blockchain
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Block'
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get the latest block
+      tags:
+      - block
+swagger: "2.0"
