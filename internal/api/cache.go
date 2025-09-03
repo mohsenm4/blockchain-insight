@@ -1,15 +1,21 @@
 package api
 
 import (
+	"github.com/Mohsen20031203/blockchain-insight/internal/models"
 	"github.com/gin-gonic/gin"
 )
 
-func (s *Server) initCache(c *gin.Context) {
+func (s *Server) Cache() gin.HandlerFunc {
+	return func(c *gin.Context) {
 
-	block, ok := s.cach.Get("latest_block")
-	if ok {
-		c.JSON(200, block)
-		return
+		if cached, ok := s.cach.Get(LastBlock); ok {
+			blk := cached.(*models.Block)
+			c.JSON(200, blk)
+
+			c.Abort()
+			return
+		}
+
+		c.Next()
 	}
-
 }

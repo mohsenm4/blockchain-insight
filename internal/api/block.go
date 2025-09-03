@@ -2,6 +2,7 @@ package api
 
 import (
 	"strconv"
+	"time"
 
 	"github.com/Mohsen20031203/blockchain-insight/internal/enthblock"
 	"github.com/gin-gonic/gin"
@@ -75,5 +76,6 @@ func (s *Server) GetLastBlock(c *gin.Context) {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
+	s.cach.Set(LastBlock, block, 10*time.Second)
 	c.JSON(200, block)
 }

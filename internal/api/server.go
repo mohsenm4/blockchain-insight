@@ -2,6 +2,7 @@ package api
 
 import (
 	"log"
+	"time"
 
 	"github.com/Mohsen20031203/blockchain-insight/config"
 	_ "github.com/Mohsen20031203/blockchain-insight/docs"
@@ -21,6 +22,8 @@ type Server struct {
 	cach   *cache.Cache
 }
 
+const LastBlock = "last_block"
+
 func NewServer(config config.Config) *Server {
 
 	client, err := enthblock.NewClient(config.RPCURL)
@@ -28,9 +31,11 @@ func NewServer(config config.Config) *Server {
 		log.Fatal(err)
 	}
 
+	cach := cache.New(cache.NoExpiration, 1*time.Hour)
 	server := &Server{
 		client: client,
 		config: config,
+		cach:   cach,
 	}
 
 	server.setupRouter()
@@ -47,8 +52,8 @@ func (s *Server) setupRouter() {
 
 	router.GET("/balace/:address", s.GetAddressBalance)
 
-	router.Use()
 	router.GET("/block/:id", s.GetBlockById)
+	router.Use(s.Cache())
 	router.GET("/last/block", s.GetLastBlock)
 	s.router = router
 }
