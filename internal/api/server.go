@@ -9,6 +9,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
+	"github.com/patrickmn/go-cache"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 )
@@ -17,6 +18,7 @@ type Server struct {
 	client *ethclient.Client
 	config config.Config
 	router *gin.Engine
+	cach   *cache.Cache
 }
 
 func NewServer(config config.Config) *Server {
@@ -44,6 +46,8 @@ func (s *Server) setupRouter() {
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 
 	router.GET("/balace/:address", s.GetAddressBalance)
+
+	router.Use()
 	router.GET("/block/:id", s.GetBlockById)
 	router.GET("/last/block", s.GetLastBlock)
 	s.router = router
