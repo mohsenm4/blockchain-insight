@@ -45,16 +45,14 @@ func NewServer(config config.Config) *Server {
 
 func (s *Server) setupRouter() {
 	router := gin.Default()
-
 	router.Use(gzip.Gzip(gzip.DefaultCompression))
 
-	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
-
 	router.GET("/balace/:address", s.GetAddressBalance)
-
 	router.GET("/block/:id", s.GetBlockById)
-	router.Use(s.Cache())
-	router.GET("/last/block", s.GetLastBlock)
+	router.GET("/last/block", s.Cache(), s.GetLastBlock)
+
+	// Swagger
+	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 	s.router = router
 }
 
