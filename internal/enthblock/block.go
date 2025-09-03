@@ -2,6 +2,7 @@ package enthblock
 
 import (
 	"context"
+	"math/big"
 
 	"github.com/Mohsen20031203/blockchain-insight/internal/models"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -18,7 +19,7 @@ func GetLatestBlockNumber(client *ethclient.Client) (uint64, error) {
 
 func GetBlockByNumber(client *ethclient.Client, blockNumber uint64) (*models.Block, error) {
 
-	block, err := client.BlockByNumber(context.Background(), nil)
+	block, err := client.BlockByNumber(context.Background(), big.NewInt(int64(blockNumber)))
 	if err != nil {
 		return nil, err
 	}

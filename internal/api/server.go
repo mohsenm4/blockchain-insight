@@ -4,10 +4,13 @@ import (
 	"log"
 
 	"github.com/Mohsen20031203/blockchain-insight/config"
+	_ "github.com/Mohsen20031203/blockchain-insight/docs"
 	"github.com/Mohsen20031203/blockchain-insight/internal/enthblock"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
+	swaggerFiles "github.com/swaggo/files"
+	ginSwagger "github.com/swaggo/gin-swagger"
 )
 
 type Server struct {
@@ -37,9 +40,12 @@ func (s *Server) setupRouter() {
 	router := gin.Default()
 
 	router.Use(gzip.Gzip(gzip.DefaultCompression))
+
+	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+
 	router.GET("/balace/:address", s.GetAddressBalance)
 	router.GET("/block/:id", s.GetBlockById)
-	router.GET("/last/block/", s.GetLastBlock)
+	router.GET("/last/block", s.GetLastBlock)
 	s.router = router
 }
 

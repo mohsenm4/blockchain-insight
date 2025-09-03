@@ -10,13 +10,13 @@ import (
 // GetAddressBalance godoc
 // @Summary      Get balance of an address
 // @Description  Returns the balance of a given blockchain address
-// @Tags         address
+// @Tags         block
 // @Accept       json
 // @Produce      json
 // @Param        address   path      string  true  "Blockchain address"
 // @Success      200  {object}  map[string]string
 // @Failure      500  {object}  map[string]string
-// @Router       /address/{address}/balance [get]
+// @Router       /balace/{address} [get]
 func (s *Server) GetAddressBalance(c *gin.Context) {
 	address := c.Param("address")
 	balance, err := enthblock.GetBalance(s.client, address)
@@ -62,7 +62,7 @@ func (s *Server) GetBlockById(c *gin.Context) {
 // @Produce      json
 // @Success      200  {object}  models.Block
 // @Failure      500  {object}  map[string]string
-// @Router       /block/latest [get]
+// @Router       /last/block [get]
 func (s *Server) GetLastBlock(c *gin.Context) {
 
 	blockNumber, err := enthblock.GetLatestBlockNumber(s.client)

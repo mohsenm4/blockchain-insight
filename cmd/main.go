@@ -7,6 +7,9 @@ import (
 	"github.com/Mohsen20031203/blockchain-insight/internal/api"
 )
 
+// @title Blockchain Insight API
+// @version 1.0
+// @BasePath
 func main() {
 
 	config, err := config.LoadConfig("../.")
