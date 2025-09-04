@@ -8,14 +8,14 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 )
 
-func (c *Client) GetTxByHash(hash string) (models.Transaction, error) {
+func (c *Client) GetTxByHash(hash string) (*types.Transaction, error) {
 
 	hexHash := common.HexToHash(hash)
 	trans, ok, err := c.Eth.TransactionByHash(context.Background(), hexHash)
 	if err != nil || !ok {
-		return models.Transaction{}, err
+		return nil, err
 	}
-	return c.ConvertTx(trans), nil
+	return trans, nil
 }
 
 func (c *Client) ConvertTx(tx *types.Transaction) models.Transaction {
