@@ -52,7 +52,6 @@ func (s *Server) setupRouter() {
 
 	router.GET("/tx/:hash", s.GetTxByHash)
 	router.GET("/account/:address/txs")
-	router.GET("/blocks")
 	router.GET("/gas")
 
 	// Swagger
