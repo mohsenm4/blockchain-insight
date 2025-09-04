@@ -1,4 +1,4 @@
-package enthblock
+package enth
 
 import "github.com/ethereum/go-ethereum/ethclient"
 

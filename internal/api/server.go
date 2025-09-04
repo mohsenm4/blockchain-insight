@@ -6,7 +6,7 @@ import (
 
 	"github.com/Mohsen20031203/blockchain-insight/config"
 	_ "github.com/Mohsen20031203/blockchain-insight/docs"
-	"github.com/Mohsen20031203/blockchain-insight/internal/enthblock"
+	"github.com/Mohsen20031203/blockchain-insight/internal/enth"
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
 	"github.com/patrickmn/go-cache"
@@ -15,7 +15,7 @@ import (
 )
 
 type Server struct {
-	client *enthblock.Client
+	client *enth.Client
 	config config.Config
 	router *gin.Engine
 	cach   *cache.Cache
@@ -24,8 +24,7 @@ type Server struct {
 const LastBlock = "last_block"
 
 func NewServer(config config.Config) *Server {
-
-	client, err := enthblock.NewClient(config.RPCURL)
+	client, err := enth.NewClient(config.RPCURL)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -51,7 +50,6 @@ func (s *Server) setupRouter() {
 	router.GET("/last/block", s.Cache(), s.GetLastBlock)
 
 	router.GET("/tx/:hash", s.GetTxByHash)
-	router.GET("/account/:address/txs")
 	router.GET("/gas")
 
 	// Swagger
