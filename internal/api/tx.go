@@ -2,7 +2,7 @@ package api
 
 import "github.com/gin-gonic/gin"
 
-func (s *Server) Tx(c *gin.Context) {
+func (s *Server) GetTxByHash(c *gin.Context) {
 	txHash := c.Param("tx")
 	hash, err := s.client.GetTxByHash(txHash)
 	if err != nil {

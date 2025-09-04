@@ -50,7 +50,7 @@ func (s *Server) setupRouter() {
 	router.GET("/block/:id", s.GetBlockById)
 	router.GET("/last/block", s.Cache(), s.GetLastBlock)
 
-	router.GET("/tx/:hash")
+	router.GET("/tx/:hash", s.GetTxByHash)
 	router.GET("/account/:address/txs")
 	router.GET("/blocks")
 	router.GET("/gas")
