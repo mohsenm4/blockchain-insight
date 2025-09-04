@@ -49,9 +49,6 @@ func (s *Server) setupRouter() {
 	router.GET("/block/:id", s.GetBlockById)
 	router.GET("/last/block", s.Cache(), s.GetLastBlock)
 
-	router.GET("/tx/:hash", s.GetTxByHash)
-	router.GET("/gas")
-
 	// Swagger
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
 	s.router = router
