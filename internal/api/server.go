@@ -7,7 +7,6 @@ import (
 	"github.com/Mohsen20031203/blockchain-insight/config"
 	_ "github.com/Mohsen20031203/blockchain-insight/docs"
 	"github.com/Mohsen20031203/blockchain-insight/internal/enthblock"
-	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
 	"github.com/patrickmn/go-cache"
@@ -16,7 +15,7 @@ import (
 )
 
 type Server struct {
-	client *ethclient.Client
+	client *enthblock.Client
 	config config.Config
 	router *gin.Engine
 	cach   *cache.Cache
@@ -53,7 +52,7 @@ func (s *Server) setupRouter() {
 
 	router.GET("/tx/:hash")
 	router.GET("/account/:address/txs")
-	router.GET("/api/blocks")
+	router.GET("/blocks")
 	router.GET("/gas")
 
 	// Swagger

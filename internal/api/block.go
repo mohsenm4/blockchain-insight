@@ -4,7 +4,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/Mohsen20031203/blockchain-insight/internal/enthblock"
 	"github.com/gin-gonic/gin"
 )
 
@@ -20,7 +19,7 @@ import (
 // @Router       /balace/{address} [get]
 func (s *Server) GetAddressBalance(c *gin.Context) {
 	address := c.Param("address")
-	balance, err := enthblock.GetBalance(s.client, address)
+	balance, err := s.client.GetBalance(address)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
@@ -47,7 +46,7 @@ func (s *Server) GetBlockById(c *gin.Context) {
 		c.JSON(400, gin.H{"error": "invalid block number"})
 		return
 	}
-	block, err := enthblock.GetBlockByNumber(s.client, blockNumber)
+	block, err := s.client.GetBlockByNumber(blockNumber)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
@@ -66,12 +65,12 @@ func (s *Server) GetBlockById(c *gin.Context) {
 // @Router       /last/block [get]
 func (s *Server) GetLastBlock(c *gin.Context) {
 
-	blockNumber, err := enthblock.GetLatestBlockNumber(s.client)
+	blockNumber, err := s.client.GetLatestBlockNumber()
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	block, err := enthblock.GetBlockByNumber(s.client, blockNumber)
+	block, err := s.client.GetBlockByNumber(blockNumber)
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return

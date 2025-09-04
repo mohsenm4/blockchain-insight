@@ -5,12 +5,11 @@ import (
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/ethclient"
 )
 
-func GetBalance(client *ethclient.Client, address string) (*big.Int, error) {
+func (c *Client) GetBalance(address string) (*big.Int, error) {
 	account := common.HexToAddress(address)
-	balance, err := client.BalanceAt(context.Background(), account, nil)
+	balance, err := c.Eth.BalanceAt(context.Background(), account, nil)
 	if err != nil {
 		return nil, err
 	}
