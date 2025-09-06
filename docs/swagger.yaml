@@ -119,31 +119,4 @@ paths:
       summary: Get the last block
       tags:
       - block
-  /tx/{hash}:
-    get:
-      consumes:
-      - application/json
-      description: Returns the transaction details for the given transaction hash
-      parameters:
-      - description: Transaction hash
-        in: path
-        name: tx
-        required: true
-        type: string
-      produces:
-      - application/json
-      responses:
-        "200":
-          description: OK
-          schema:
-            $ref: '#/definitions/models.Transaction'
-        "500":
-          description: Internal Server Error
-          schema:
-            additionalProperties:
-              type: string
-            type: object
-      summary: Get transaction by hash
-      tags:
-      - transaction
 swagger: "2.0"

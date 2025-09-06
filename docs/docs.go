@@ -140,47 +140,6 @@ const docTemplate = `{
                     }
                 }
             }
-        },
-        "/tx/{hash}": {
-            "get": {
-                "description": "Returns the transaction details for the given transaction hash",
-                "consumes": [
-                    "application/json"
-                ],
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "transaction"
-                ],
-                "summary": "Get transaction by hash",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Transaction hash",
-                        "name": "tx",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "200": {
-                        "description": "OK",
-                        "schema": {
-                            "$ref": "#/definitions/models.Transaction"
-                        }
-                    },
-                    "500": {
-                        "description": "Internal Server Error",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
         }
     },
     "definitions": {
