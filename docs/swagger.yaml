@@ -6,16 +6,14 @@ definitions:
       miner:
         type: string
       number:
-        format: int64
         type: integer
       timestamp:
-        format: int64
         type: integer
       transactions:
         items:
           $ref: '#/definitions/models.Transaction'
         type: array
-      txCount:
+      tx_count:
         type: integer
     type: object
   models.Transaction:
@@ -66,7 +64,7 @@ paths:
             type: object
       summary: Get balance of an address
       tags:
-      - block
+      - account
   /block/{id}:
     get:
       consumes:
@@ -121,4 +119,31 @@ paths:
       summary: Get the last block
       tags:
       - block
+  /tx/{hash}:
+    get:
+      consumes:
+      - application/json
+      description: Returns the transaction details for the given transaction hash
+      parameters:
+      - description: Transaction hash
+        in: path
+        name: tx
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Transaction'
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get transaction by hash
+      tags:
+      - transaction
 swagger: "2.0"

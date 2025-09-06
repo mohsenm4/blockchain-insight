@@ -25,7 +25,7 @@ const docTemplate = `{
                     "application/json"
                 ],
                 "tags": [
-                    "block"
+                    "account"
                 ],
                 "summary": "Get balance of an address",
                 "parameters": [
@@ -140,6 +140,47 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/tx/{hash}": {
+            "get": {
+                "description": "Returns the transaction details for the given transaction hash",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "transaction"
+                ],
+                "summary": "Get transaction by hash",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Transaction hash",
+                        "name": "tx",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/models.Transaction"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -153,12 +194,10 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "number": {
-                    "type": "integer",
-                    "format": "int64"
+                    "type": "integer"
                 },
                 "timestamp": {
-                    "type": "integer",
-                    "format": "int64"
+                    "type": "integer"
                 },
                 "transactions": {
                     "type": "array",
@@ -166,7 +205,7 @@ const docTemplate = `{
                         "$ref": "#/definitions/models.Transaction"
                     }
                 },
-                "txCount": {
+                "tx_count": {
                     "type": "integer"
                 }
             }
