@@ -19,5 +19,5 @@ This project works like a minimal version of [Etherscan](https://etherscan.io), 
 
 ### 1. Clone the repository
 ```bash
-git clone https://github.com/your-username/go-eth-block-explorer.git
+git clone https://github.com/Mohsen20031203/blockchain-insight.git
 cd go-eth-block-explorer
