@@ -44,9 +44,12 @@ func NewServer(config config.Config) *Server {
 			if err != nil {
 				continue
 			}
-			client.GetBlockByNumber(block)
+			lastBlock, err := client.GetBlockByNumber(block)
+			if err != nil {
+				continue
+			}
 			// save block to cache
-			cach.Set(LastBlock, block, cache.DefaultExpiration)
+			cach.Set(LastBlock, lastBlock, cache.DefaultExpiration)
 		}
 	}()
 
