@@ -36,23 +36,6 @@ func NewServer(config config.Config) *Server {
 		cach:   cach,
 	}
 
-	go func() {
-		for {
-			time.Sleep(10 * time.Second)
-			// get last block from blockchain
-			block, err := client.GetLatestBlockNumber()
-			if err != nil {
-				continue
-			}
-			lastBlock, err := client.GetBlockByNumber(block)
-			if err != nil {
-				continue
-			}
-			// save block to cache
-			cach.Set(LastBlock, lastBlock, cache.DefaultExpiration)
-		}
-	}()
-
 	server.setupRouter()
 	return server
 
