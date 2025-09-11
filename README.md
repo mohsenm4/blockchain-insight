@@ -16,3 +16,12 @@ With this explorer, you can easily fetch and analyze **blocks, transactions, and
 - 📡 **Real-Time Updates** – WebSocket support keeps you up-to-date with the latest blocks and transactions as they are mined.  
 - 🌐 **RESTful API** – Clean endpoints to integrate blockchain data into your applications programmatically.  
 - 🛠️ **Developer-Friendly** – Simple, extensible design that allows you to expand features easily.  
+
+---
+
+## 🚀 Getting Started  
+
+### 1. Clone the Repository  
+```bash
+git clone https://github.com/Mohsen20031203/blockchain-insight.git
+cd go-eth-block-explorer
