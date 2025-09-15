@@ -11,7 +11,8 @@ import (
 func (c *Client) GetTxByHash(hash string) (*types.Transaction, error) {
 
 	hexHash := common.HexToHash(hash)
-	trans, ok, err := c.Eth.TransactionByHash(context.Background(), hexHash)
+	background := context.Background()
+	trans, ok, err := c.Eth.TransactionByHash(background, hexHash)
 	if err != nil || !ok {
 		return nil, err
 	}
