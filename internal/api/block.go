@@ -45,7 +45,7 @@ func (s *Server) GetBlockById(c *gin.Context) {
 // @Router       /last/block [get]
 func (s *Server) GetLastBlock(c *gin.Context) {
 
-	blockNumber, err := s.client.GetLatestBlockNumber()
+	blockNumber, err := s.client.GetlastBlockNumber()
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
