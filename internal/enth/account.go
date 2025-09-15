@@ -9,7 +9,9 @@ import (
 
 func (c *Client) GetBalance(address string) (*big.Int, error) {
 	account := common.HexToAddress(address)
-	balance, err := c.Eth.BalanceAt(context.Background(), account, nil)
+
+	background := context.Background()
+	balance, err := c.Eth.BalanceAt(background, account, nil)
 	if err != nil {
 		return nil, err
 	}
