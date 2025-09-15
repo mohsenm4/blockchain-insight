@@ -7,7 +7,7 @@ import (
 	"github.com/Mohsen20031203/blockchain-insight/internal/models"
 )
 
-func (c *Client) GetlastBlockNumber() (uint64, error) {
+func (c *Client) GetLastBlockNumber() (uint64, error) {
 	blockNumber, err := c.Eth.BlockNumber(context.Background())
 	if err != nil {
 		return 0, err
