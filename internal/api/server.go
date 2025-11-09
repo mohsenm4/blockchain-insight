@@ -55,6 +55,7 @@ func (s *Server) setupRouter() {
 	s.router = router
 }
 
+// Start runs the Gin server on the specified address.
 func (s *Server) Start(addr string) error {
 	return s.router.Run(addr)
 }
