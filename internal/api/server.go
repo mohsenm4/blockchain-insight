@@ -41,6 +41,7 @@ func NewServer(config config.Config) *Server {
 
 }
 
+// setupRouter initializes the Gin router and sets up the routes and middleware.
 func (s *Server) setupRouter() {
 	router := gin.Default()
 	router.Use(gzip.Gzip(gzip.DefaultCompression))
