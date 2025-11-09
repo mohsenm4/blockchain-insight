@@ -19,6 +19,7 @@ func (c *Client) GetTxByHash(hash string) (*types.Transaction, error) {
 	return trans, nil
 }
 
+// ConvertTx converts an Ethereum transaction to a models.Transaction.
 func (c *Client) ConvertTx(tx *types.Transaction) models.Transaction {
 	var result models.Transaction
 	to := ""
