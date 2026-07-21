@@ -1,27 +1,79 @@
-# Go Ethereum Block Explorer 🚀  
+# blockchain-insight
 
-A modern, lightweight, and high-performance **Ethereum block explorer** built with **Go**.  
-This project is designed to provide developers, researchers, and blockchain enthusiasts with a minimal yet powerful tool to **explore the Ethereum blockchain**. Think of it as a simplified version of [Etherscan](https://etherscan.io), but focused on speed, clarity, and extensibility.  
+A small Ethereum block explorer written in Go. It exposes a REST API that reads blocks and account balances from an Ethereum RPC node.
 
-With this explorer, you can easily fetch and analyze **blocks, transactions, and account balances** in **real-time**, while benefiting from caching and WebSocket-based updates.  
+This is a personal project used to practice production-grade Go: clean packages, HTTP handlers, config loading, caching, and Swagger docs.
 
----
+## Status
 
-## ✨ Features  
+Early. The API is stable enough to run locally against a public RPC endpoint. Test coverage, CI, and Docker packaging are being added.
 
-- 🔎 **Block Exploration** – Fetch and display latest blocks with details (block number, hash, timestamp, miner, and transaction count).  
-- 🔗 **Transaction Lookup** – View all transactions inside a block or search directly by transaction hash.  
-- 👤 **Account Information** – Retrieve balances and track activity for any Ethereum address.  
-- ⚡ **Caching Layer** – Built-in cache for faster repeated queries, reducing network overhead.  
-- 📡 **Real-Time Updates** – WebSocket support keeps you up-to-date with the latest blocks and transactions as they are mined.  
-- 🌐 **RESTful API** – Clean endpoints to integrate blockchain data into your applications programmatically.  
-- 🛠️ **Developer-Friendly** – Simple, extensible design that allows you to expand features easily.  
+## Endpoints
 
----
+| Method | Path                    | Description                                     |
+|--------|-------------------------|-------------------------------------------------|
+| GET    | `/last/block`           | Latest block. Response is cached in memory.     |
+| GET    | `/block/:id`            | Block by number.                                |
+| GET    | `/balance/:address`     | ETH balance of an address in wei.               |
+| GET    | `/swagger/*`            | Swagger UI for the API.                         |
 
-## 🚀 Getting Started  
+## Requirements
 
-### 1. Clone the Repository  
+- Go 1.24 or newer
+- An Ethereum JSON-RPC endpoint (Infura, Alchemy, or a local node)
+
+## Configuration
+
+The server reads configuration from an `app.env` file (via `viper`) and from environment variables.
+
+Create `app.env` in the project root:
+
+```env
+RPC_URL=https://mainnet.infura.io/v3/YOUR_PROJECT_ID
+NETWORK_NAME=mainnet
+TIMEOUT_SEC=10
+```
+
+`RPC_URL` is required. The server will fail to start without it.
+
+## Run
+
 ```bash
-git clone https://github.com/Mohsen20031203/blockchain-insight.git
-cd go-eth-block-explorer
+go run ./cmd
+```
+
+The server listens on `:5050`.
+
+Example:
+
+```bash
+curl http://localhost:5050/last/block
+curl http://localhost:5050/block/19000000
+curl http://localhost:5050/balance/0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045
+```
+
+## Project layout
+
+```text
+cmd/            entry point
+config/         viper-based config loader
+internal/api/   HTTP server, handlers, cache middleware
+internal/enth/  Ethereum client wrapper (go-ethereum)
+internal/models/ response types
+internal/utils/ formatting helpers
+docs/           generated Swagger files
+```
+
+## Roadmap
+
+- Transaction lookup endpoint (`GET /tx/:hash`)
+- Structured logging
+- Graceful shutdown on SIGTERM
+- `go test -race` coverage above 80%
+- GitHub Actions CI (lint + test + coverage)
+- Docker + docker-compose for local development
+- Benchmarks for the cache layer
+
+## License
+
+MIT
