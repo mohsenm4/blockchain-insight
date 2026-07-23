@@ -1,0 +1,24 @@
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  disable-all: true
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gosimple
+    - gofmt
+    - goimports
+    - misspell
+    - unconvert
+    - unparam
+
+issues:
+  exclude-dirs:
+    - docs
+  max-issues-per-linter: 0
+  max-same-issues: 0
