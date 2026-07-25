@@ -12,8 +12,8 @@ func (c *Client) GetTxByHash(hash string) (*types.Transaction, error) {
 
 	hexHash := common.HexToHash(hash)
 	background := context.Background()
-	trans, ok, err := c.Eth.TransactionByHash(background, hexHash)
-	if err != nil || !ok {
+	trans, _, err := c.Eth.TransactionByHash(background, hexHash)
+	if err != nil {
 		return nil, err
 	}
 	return trans, nil
