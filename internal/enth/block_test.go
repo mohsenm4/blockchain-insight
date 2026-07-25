@@ -73,5 +73,4 @@ func TestGetBlockByNumber_Error(t *testing.T) {
 
 func TestGetBlockByNumber(t *testing.T) {
 	t.Skip("requires real Ethereum node — ethclient.BlockByNumber validates block hash against header")
-	// TODO: با testcontainers یا یه بلاک واقعی mainnet
 }
