@@ -2,3 +2,4 @@
 *.env
 __debug_bin*
 launch.json
+cover.out
