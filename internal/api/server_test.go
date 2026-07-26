@@ -9,11 +9,6 @@ import (
 	"github.com/patrickmn/go-cache"
 )
 
-// TestServerCacheConcurrentAccess mirrors the real access pattern under
-// concurrent HTTP requests to /last/block: the Cache() middleware reads
-// s.cach, and GetLastBlock writes to s.cach with s.cach.Set. This test
-// fires many goroutines doing both, so the race detector can observe
-// whether the pattern is safe.
 func TestServerCacheConcurrentAccess(t *testing.T) {
 	s := &Server{
 		cach: cache.New(cache.NoExpiration, 1*time.Hour),
