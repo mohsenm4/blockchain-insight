@@ -1,6 +1,8 @@
 package api
 
 import (
+	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -33,4 +35,27 @@ func TestServerCacheConcurrentAccess(t *testing.T) {
 	}
 
 	wg.Wait()
+}
+
+func TestCacheMiddleware_Hit(t *testing.T) {
+	server := &Server{
+		cach: cache.New(cache.NoExpiration, 1*time.Hour),
+	}
+
+	block := &models.Block{Number: 123}
+	server.cach.Set(LastBlock, block, 10*time.Second)
+
+	server.setupRouter()
+
+	reco := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/last/block", nil)
+
+	server.router.ServeHTTP(reco, req)
+
+	if reco.Code != 200 {
+		t.Errorf("Expected status code %d, got %d", 200, reco.Code)
+	}
+	if !strings.Contains(reco.Body.String(), `"number":123`) {
+		t.Errorf("Expected body to contain cached block, got %s", reco.Body.String())
+	}
 }
