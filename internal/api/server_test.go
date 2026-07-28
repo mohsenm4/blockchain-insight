@@ -59,3 +59,11 @@ func TestCacheMiddleware_Hit(t *testing.T) {
 		t.Errorf("Expected body to contain cached block, got %s", reco.Body.String())
 	}
 }
+
+func TestCacheMiddleware_Miss(t *testing.T) {
+	t.Skip("miss path falls through to GetLastBlock handler → ethclient.BlockByNumber hash validation (same trap as TestGetLastBlock)")
+}
+
+func TestCacheMiddleware_Expire(t *testing.T) {
+	t.Skip("expire path falls through to GetLastBlock handler → same BlockByNumber trap")
+}
