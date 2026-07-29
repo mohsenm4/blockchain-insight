@@ -2,6 +2,9 @@ package api
 
 import (
 	"log"
+	"net/http"
+	_ "net/http/pprof"
+	"os"
 	"time"
 
 	"github.com/Mohsen20031203/blockchain-insight/config"
@@ -52,6 +55,10 @@ func (s *Server) setupRouter() {
 
 	// Swagger
 	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	if os.Getenv("ENABLE_PPROF") == "true" {
+		router.GET("/debug/pprof/*any", gin.WrapH(http.DefaultServeMux))
+	}
+
 	s.router = router
 }
 
