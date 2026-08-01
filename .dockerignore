@@ -1,0 +1,29 @@
+# Security
+.env
+.env.local
+*.pem
+*.key
+
+# VCS
+.git
+.gitignore
+.gitattributes
+.github/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Test & build artifacts
+*.test
+coverage.out
+cover.out
+server
+main
+bin/
+
+# Docker
+Dockerfile
+.dockerignore
