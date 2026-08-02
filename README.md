@@ -52,6 +52,17 @@ curl http://localhost:5050/block/19000000
 curl http://localhost:5050/balance/0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045
 ```
 
+## Run with Docker
+
+### Prerequisites
+- Docker & Docker Compose installed
+
+### Setup
+1. Copy the example env file and fill in your values:
+   ```bash
+   cp cmd/app.env.example cmd/app.env
+
+
 ## Project layout
 
 ```text
