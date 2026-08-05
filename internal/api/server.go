@@ -47,7 +47,7 @@ func NewServer(config config.Config) *Server {
 // setupRouter initializes the Gin router and sets up the routes and middleware.
 func (s *Server) setupRouter() {
 	router := gin.Default()
-	router.Use(gzip.Gzip(gzip.DefaultCompression))
+	router.Use(gzip.Gzip(gzip.BestSpeed))
 
 	router.GET("/balance/:address", s.GetAddressBalance)
 	router.GET("/block/:id", s.GetBlockById)
