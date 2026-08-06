@@ -8,13 +8,10 @@ import (
 	"time"
 
 	"github.com/Mohsen20031203/blockchain-insight/config"
-	_ "github.com/Mohsen20031203/blockchain-insight/docs"
 	"github.com/Mohsen20031203/blockchain-insight/internal/enth"
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
 	"github.com/patrickmn/go-cache"
-	swaggerFiles "github.com/swaggo/files"
-	ginSwagger "github.com/swaggo/gin-swagger"
 )
 
 type Server struct {
@@ -53,8 +50,9 @@ func (s *Server) setupRouter() {
 	router.GET("/block/:id", s.GetBlockById)
 	router.GET("/last/block", s.Cache(), s.GetLastBlock)
 
-	// Swagger
-	router.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))
+	// Swagger — mounted only when built with `-tags swagger`
+	mountSwagger(router)
+
 	if os.Getenv("ENABLE_PPROF") == "true" {
 		router.GET("/debug/pprof/*any", gin.WrapH(http.DefaultServeMux))
 	}
