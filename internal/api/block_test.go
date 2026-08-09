@@ -1,12 +1,14 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/Mohsen20031203/blockchain-insight/internal/enth"
+	"github.com/Mohsen20031203/blockchain-insight/internal/models"
 	"github.com/patrickmn/go-cache"
 )
 
@@ -38,7 +40,34 @@ func TestGetLastBlock_Error(t *testing.T) {
 }
 
 func TestGetLastBlock(t *testing.T) {
-	t.Skip("requires real Ethereum node — ethclient.BlockByNumber validates block hash against header")
+	expectedBlock := &models.Block{Number: 200, Hash: "0xdef"}
+	fake := &fakeClient{block: expectedBlock}
+
+	s := Server{
+		cach:   cache.New(cache.NoExpiration, 1*time.Hour),
+		client: fake,
+	}
+	s.setupRouter()
+
+	reco := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/last/block", nil)
+
+	s.router.ServeHTTP(reco, req)
+
+	if reco.Code != http.StatusOK {
+		t.Errorf("Expected status code %d, got %d", http.StatusOK, reco.Code)
+	}
+
+	var got models.Block
+	if err := json.Unmarshal(reco.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if got.Number != expectedBlock.Number {
+		t.Errorf("expected Number %d, got %d", expectedBlock.Number, got.Number)
+	}
+	if got.Hash != expectedBlock.Hash {
+		t.Errorf("expected Hash %s, got %s", expectedBlock.Hash, got.Hash)
+	}
 }
 
 func TestGetBlockById_InvalidNumber(t *testing.T) {
@@ -100,5 +129,33 @@ func TestGetBlockById_Error(t *testing.T) {
 }
 
 func TestGetBlockById(t *testing.T) {
-	t.Skip("requires real Ethereum node — ethclient.BlockByNumber validates block hash against header")
+	expectedBlock := &models.Block{Number: 100, Hash: "0xabc"}
+	fake := &fakeClient{block: expectedBlock}
+
+	s := Server{
+		cach:   cache.New(cache.NoExpiration, 1*time.Hour),
+		client: fake,
+	}
+	s.setupRouter()
+
+	reco := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/block/100", nil)
+
+	s.router.ServeHTTP(reco, req)
+
+	if reco.Code != http.StatusOK {
+		t.Errorf("Expected status code %d, got %d", http.StatusOK, reco.Code)
+	}
+
+	var got models.Block
+	if err := json.Unmarshal(reco.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if got.Number != expectedBlock.Number {
+		t.Errorf("expected Number %d, got %d", expectedBlock.Number, got.Number)
+	}
+	if got.Hash != expectedBlock.Hash {
+		t.Errorf("expected Hash %s, got %s", expectedBlock.Hash, got.Hash)
+	}
+
 }

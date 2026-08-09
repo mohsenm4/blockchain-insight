@@ -11,7 +11,6 @@ func (s *Server) Cache() gin.HandlerFunc {
 		if cached, ok := s.cach.Get(LastBlock); ok {
 			blk := cached.(*models.Block)
 			c.JSON(200, blk)
-
 			c.Abort()
 			return
 		}
