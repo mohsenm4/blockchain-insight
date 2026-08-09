@@ -10,7 +10,9 @@ func TestGetLastBlockNumber(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":"0x5daf3b"}`))
+		if _, err := w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":"0x5daf3b"}`)); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
 	}))
 
 	defer server.Close()
