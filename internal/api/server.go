@@ -15,7 +15,7 @@ import (
 )
 
 type Server struct {
-	client *enth.Client
+	client EthClient
 	config config.Config
 	router *gin.Engine
 	cach   *cache.Cache
