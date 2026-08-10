@@ -12,13 +12,15 @@ import (
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
 	"github.com/patrickmn/go-cache"
+	"golang.org/x/sync/singleflight"
 )
 
 type Server struct {
-	client EthClient
-	config config.Config
-	router *gin.Engine
-	cach   *cache.Cache
+	client  EthClient
+	config  config.Config
+	router  *gin.Engine
+	cach    *cache.Cache
+	sfGroup singleflight.Group
 }
 
 const LastBlock = "last_block"
@@ -31,9 +33,10 @@ func NewServer(config config.Config) *Server {
 
 	cach := cache.New(cache.NoExpiration, 1*time.Hour)
 	server := &Server{
-		client: client,
-		config: config,
-		cach:   cach,
+		client:  client,
+		config:  config,
+		cach:    cach,
+		sfGroup: singleflight.Group{},
 	}
 
 	server.setupRouter()

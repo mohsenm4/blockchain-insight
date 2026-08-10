@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/Mohsen20031203/blockchain-insight/internal/models"
 	"github.com/gin-gonic/gin"
 )
 
@@ -45,16 +46,25 @@ func (s *Server) GetBlockById(c *gin.Context) {
 // @Router       /last/block [get]
 func (s *Server) GetLastBlock(c *gin.Context) {
 
-	blockNumber, err := s.client.GetLastBlockNumber()
+	v, err, _ := s.sfGroup.Do(LastBlock, func() (interface{}, error) {
+		blockNumber, err := s.client.GetLastBlockNumber()
+		if err != nil {
+			return nil, err
+		}
+		block, err := s.client.GetBlockByNumber(blockNumber)
+		if err != nil {
+			return nil, err
+		}
+		s.cach.Set(LastBlock, block, 10*time.Second)
+		return block, nil
+	})
+
 	if err != nil {
 		c.JSON(500, gin.H{"error": err.Error()})
 		return
 	}
-	block, err := s.client.GetBlockByNumber(blockNumber)
-	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
-		return
-	}
-	s.cach.Set(LastBlock, block, 10*time.Second)
+
+	block := v.(*models.Block) // type assertion چون Do interface{} برمی‌گردونه
 	c.JSON(200, block)
+
 }
