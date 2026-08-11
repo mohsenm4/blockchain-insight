@@ -33,10 +33,9 @@ func NewServer(config config.Config) *Server {
 
 	cach := cache.New(cache.NoExpiration, 1*time.Hour)
 	server := &Server{
-		client:  client,
-		config:  config,
-		cach:    cach,
-		sfGroup: singleflight.Group{},
+		client: client,
+		config: config,
+		cach:   cach,
 	}
 
 	server.setupRouter()
