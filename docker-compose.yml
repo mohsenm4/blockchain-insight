@@ -4,4 +4,4 @@ services:
     ports:
       - "5050:5050"
     volumes:
-      - ./cmd/app.env:/app.env
+      - ./cmd/app.env:/app/app.env:ro
