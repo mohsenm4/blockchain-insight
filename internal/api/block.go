@@ -64,7 +64,6 @@ func (s *Server) GetLastBlock(c *gin.Context) {
 		return
 	}
 
-	block := v.(*models.Block) // type assertion چون Do interface{} برمی‌گردونه
+	block := v.(*models.Block)
 	c.JSON(200, block)
-
 }
