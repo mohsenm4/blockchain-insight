@@ -1,7 +1,7 @@
 package config
 
 import (
-	"log"
+	"errors"
 
 	"github.com/spf13/viper"
 )
@@ -12,6 +12,8 @@ type Config struct {
 	TimeoutSec  int    `mapstructure:"timeout_sec"`
 }
 
+var ErrMissingRPCURL = errors.New("RPC_URL must be set (via app.env or environment)")
+
 func LoadConfig(path string) (config Config, err error) {
 	viper.AddConfigPath(path)
 	viper.SetConfigName("app")
@@ -19,15 +21,17 @@ func LoadConfig(path string) (config Config, err error) {
 
 	viper.AutomaticEnv()
 
-	err = viper.ReadInConfig()
-	if err != nil {
+	if err = viper.ReadInConfig(); err != nil {
 		return
 	}
 
-	err = viper.Unmarshal(&config)
-	url := config.RPCURL
-	if url == "" {
-		log.Fatal("Environment variable RPC_URL must be set")
+	if err = viper.Unmarshal(&config); err != nil {
+		return
+	}
+
+	if config.RPCURL == "" {
+		err = ErrMissingRPCURL
+		return
 	}
 	return
 }
