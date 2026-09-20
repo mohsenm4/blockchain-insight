@@ -23,7 +23,6 @@ func TestManualTransferEncoding(t *testing.T) {
 
 	selector := crypto.Keccak256([]byte("transfer(address,uint256)"))[:4]
 	manual = append(manual, selector...)
-
 	manual = append(manual, common.LeftPadBytes(to.Bytes(), 32)...)
 	manual = append(manual, common.LeftPadBytes(amount.Bytes(), 32)...)
 
