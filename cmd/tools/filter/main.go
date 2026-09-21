@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -40,23 +41,61 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	from := head - 1000
 
-	iter, err := token.FilterTransfer(&bind.FilterOpts{Start: from, End: &head, Context: ctx}, nil, nil) // 4. filter Transfer events
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer iter.Close()
+	last := head
 
-	n := 0
-	for iter.Next() { // 5. iterate over events
-		ev := iter.Event
-		fmt.Printf("block=%d idx=%d %s -> %s value=%s tx=%s\n",
-			ev.Raw.BlockNumber, ev.Raw.Index, ev.From.Hex(), ev.To.Hex(), ev.Value, ev.Raw.TxHash.Hex())
-		n++
+	for {
+		head, err := client.BlockNumber(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			log.Println("error getting block number:", err)
+			continue
+		}
+
+		if head > last {
+			iter, err := token.FilterTransfer(
+				&bind.FilterOpts{
+					Start:   last + 1,
+					End:     &head,
+					Context: ctx,
+				},
+				nil,
+				nil,
+			)
+			if err != nil {
+				log.Println("error filtering transfers:", err)
+			} else {
+				for iter.Next() {
+					ev := iter.Event
+					fmt.Printf(
+						"block=%d idx=%d %s -> %s value=%s tx=%s\n",
+						ev.Raw.BlockNumber,
+						ev.Raw.Index,
+						ev.From.Hex(),
+						ev.To.Hex(),
+						ev.Value,
+						ev.Raw.TxHash.Hex(),
+					)
+				}
+
+				if err := iter.Error(); err != nil {
+					log.Println("iterator error:", err)
+				}
+
+				iter.Close() // نه defer
+			}
+
+			last = head
+		}
+
+		select {
+		case <-time.After(10 * time.Second):
+		case <-ctx.Done():
+			fmt.Println("shutting down:", ctx.Err())
+			return
+		}
 	}
-	if err := iter.Error(); err != nil {
-		log.Fatal(err)
-	}
-	fmt.Println("total:", n)
+
 }
