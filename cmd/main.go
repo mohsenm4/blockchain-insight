@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/Mohsen20031203/blockchain-insight/config"
 	"github.com/Mohsen20031203/blockchain-insight/internal/api"
@@ -28,9 +31,16 @@ func main() {
 	}
 
 	server := api.NewServer(cfg)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	if err := server.StartWatcher(ctx); err != nil {
+		slog.Error("start watcher", "err", err)
+		os.Exit(1)
+	}
 
 	slog.Info("server starting", "addr", ":5050", "env", env)
-	if err := server.Start(":5050"); err != nil {
+	if err := server.Start(ctx, ":5050"); err != nil {
 		slog.Error("server exited", "err", err)
 		os.Exit(1)
 	}

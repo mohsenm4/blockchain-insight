@@ -1,6 +1,8 @@
 package api
 
 import (
+	"context"
+	"errors"
 	"log"
 	"net/http"
 	_ "net/http/pprof"
@@ -9,6 +11,7 @@ import (
 
 	"github.com/Mohsen20031203/blockchain-insight/config"
 	"github.com/Mohsen20031203/blockchain-insight/internal/enth"
+	"github.com/Mohsen20031203/blockchain-insight/internal/watch"
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
 	"github.com/patrickmn/go-cache"
@@ -21,6 +24,7 @@ type Server struct {
 	router  *gin.Engine
 	cach    *cache.Cache
 	sfGroup singleflight.Group
+	store   *watch.Store
 }
 
 const LastBlock = "last_block"
@@ -36,6 +40,7 @@ func NewServer(config config.Config) *Server {
 		client: client,
 		config: config,
 		cach:   cach,
+		store:  watch.NewStore(),
 	}
 
 	server.setupRouter()
@@ -52,6 +57,8 @@ func (s *Server) setupRouter() {
 	router.GET("/balance/:address", s.GetAddressBalance)
 	router.GET("/block/:id", s.GetBlockById)
 	router.GET("/last/block", s.Cache(), s.GetLastBlock)
+	router.POST("/watch", s.PostWatch)
+	router.GET("/watch/:address/transfers", s.GetWatchTransfers)
 
 	// Swagger — mounted only when built with `-tags swagger`
 	mountSwagger(router)
@@ -63,7 +70,27 @@ func (s *Server) setupRouter() {
 	s.router = router
 }
 
-// Start runs the Gin server on the specified address.
-func (s *Server) Start(addr string) error {
-	return s.router.Run(addr)
+// Start serves HTTP until ctx is cancelled, then shuts down gracefully.
+func (s *Server) Start(ctx context.Context, addr string) error {
+	srv := &http.Server{Addr: addr, Handler: s.router}
+
+	errCh := make(chan error, 1)
+	go func() {
+		err := srv.ListenAndServe()
+		if errors.Is(err, http.ErrServerClosed) {
+			err = nil
+		}
+		errCh <- err
+	}()
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+		// NOT ctx: it is already cancelled. Shutdown needs its own deadline
+		// to let in-flight requests finish.
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		return srv.Shutdown(shutdownCtx)
+	}
 }
