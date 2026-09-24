@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/Mohsen20031203/blockchain-insight/internal/models"
+	"github.com/mohsenm4/blockchain-insight/internal/models"
 	"github.com/gin-gonic/gin"
 )
 

@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/Mohsen20031203/blockchain-insight/internal/enth"
+	"github.com/mohsenm4/blockchain-insight/internal/enth"
 )
 
 func TestGetAddressBalance(t *testing.T) {

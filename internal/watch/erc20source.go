@@ -7,7 +7,7 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/ethclient"
 
-	"github.com/Mohsen20031203/blockchain-insight/internal/contracts/erc20"
+	"github.com/mohsenm4/blockchain-insight/internal/contracts/erc20"
 )
 
 // ERC20Source adapts a live ERC20 contract to Source.

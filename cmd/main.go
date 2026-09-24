@@ -7,9 +7,9 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/Mohsen20031203/blockchain-insight/config"
-	"github.com/Mohsen20031203/blockchain-insight/internal/api"
-	"github.com/Mohsen20031203/blockchain-insight/internal/logging"
+	"github.com/mohsenm4/blockchain-insight/config"
+	"github.com/mohsenm4/blockchain-insight/internal/api"
+	"github.com/mohsenm4/blockchain-insight/internal/logging"
 	"github.com/gin-gonic/gin"
 )
 

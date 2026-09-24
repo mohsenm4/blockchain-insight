@@ -4,7 +4,7 @@ import (
 	"context"
 	"math/big"
 
-	"github.com/Mohsen20031203/blockchain-insight/internal/models"
+	"github.com/mohsenm4/blockchain-insight/internal/models"
 )
 
 func (c *Client) GetLastBlockNumber() (uint64, error) {
