@@ -76,7 +76,7 @@ Requires Docker and Docker Compose.
 1. Copy the example env file and fill in your `RPC_URL`:
 
    ```bash
-   cp cmd/app.env.example cmd/app.env
+   cp app.env.example app.env
    ```
 
 2. Build and start the container:
