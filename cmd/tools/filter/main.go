@@ -12,16 +12,21 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethclient"
 
+	"github.com/mohsenm4/blockchain-insight/config"
 	"github.com/mohsenm4/blockchain-insight/internal/contracts/erc20"
 	"github.com/mohsenm4/blockchain-insight/internal/watch"
 )
 
 const (
-	sepoliaRPC  = "https://ethereum-sepolia-rpc.publicnode.com"
-	sepoliaUSDC = "0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238"
+	sepoliaRPC = "https://ethereum-sepolia-rpc.publicnode.com"
 )
 
 func main() {
+
+	config, err := config.LoadConfig("../../")
+	if err != nil {
+		log.Fatal(err)
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -31,7 +36,7 @@ func main() {
 	}
 	defer client.Close()
 
-	token, err := erc20.NewERC20(common.HexToAddress(sepoliaUSDC), client)
+	token, err := erc20.NewERC20(common.HexToAddress(config.TokenAddress), client)
 	if err != nil {
 		log.Fatal(err)
 	}

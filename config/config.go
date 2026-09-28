@@ -7,12 +7,15 @@ import (
 )
 
 type Config struct {
-	RPCURL      string `mapstructure:"rpc_url"`
-	NetworkName string `mapstructure:"network_name"`
-	TimeoutSec  int    `mapstructure:"timeout_sec"`
+	RPCURL       string `mapstructure:"rpc_url"`
+	NetworkName  string `mapstructure:"network_name"`
+	TimeoutSec   int    `mapstructure:"timeout_sec"`
+	TokenAddress string `mapstructure:"token_address"`
+	PrivateKey   string `mapstructure:"private_key"`
 }
 
 var ErrMissingRPCURL = errors.New("RPC_URL must be set (via app.env or environment)")
+var ErrMissingPrivateKey = errors.New("PRIVATE_KEY must be set (via app.env or environment)")
 
 func LoadConfig(path string) (config Config, err error) {
 	viper.AddConfigPath(path)
@@ -31,6 +34,11 @@ func LoadConfig(path string) (config Config, err error) {
 
 	if config.RPCURL == "" {
 		err = ErrMissingRPCURL
+		return
+	}
+
+	if config.PrivateKey == "" {
+		err = ErrMissingPrivateKey
 		return
 	}
 	return
