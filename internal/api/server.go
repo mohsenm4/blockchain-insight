@@ -9,11 +9,12 @@ import (
 	"os"
 	"time"
 
-	"github.com/mohsenm4/blockchain-insight/config"
-	"github.com/mohsenm4/blockchain-insight/internal/enth"
-	"github.com/mohsenm4/blockchain-insight/internal/watch"
 	"github.com/gin-contrib/gzip"
 	"github.com/gin-gonic/gin"
+	"github.com/mohsenm4/blockchain-insight/config"
+	"github.com/mohsenm4/blockchain-insight/internal/enth"
+	"github.com/mohsenm4/blockchain-insight/internal/sender"
+	"github.com/mohsenm4/blockchain-insight/internal/watch"
 	"github.com/patrickmn/go-cache"
 	"golang.org/x/sync/singleflight"
 )
@@ -25,6 +26,7 @@ type Server struct {
 	cach    *cache.Cache
 	sfGroup singleflight.Group
 	store   *watch.Store
+	sender  Sender
 }
 
 const LastBlock = "last_block"
@@ -35,12 +37,17 @@ func NewServer(config config.Config) *Server {
 		log.Fatal(err)
 	}
 
+	snd, err := sender.NewERC20Sender(context.Background(), client.Eth, config.TokenAddress, config.PrivateKey)
+	if err != nil {
+		log.Fatal(err)
+	}
 	cach := cache.New(cache.NoExpiration, 1*time.Hour)
 	server := &Server{
 		client: client,
 		config: config,
 		cach:   cach,
 		store:  watch.NewStore(),
+		sender: snd,
 	}
 
 	server.setupRouter()
@@ -59,6 +66,7 @@ func (s *Server) setupRouter() {
 	router.GET("/last/block", s.Cache(), s.GetLastBlock)
 	router.POST("/watch", s.PostWatch)
 	router.GET("/watch/:address/transfers", s.GetWatchTransfers)
+	router.POST("/send", s.PostSend)
 
 	// Swagger — mounted only when built with `-tags swagger`
 	mountSwagger(router)
