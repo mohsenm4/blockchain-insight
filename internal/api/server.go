@@ -67,6 +67,7 @@ func (s *Server) setupRouter() {
 	router.POST("/watch", s.PostWatch)
 	router.GET("/watch/:address/transfers", s.GetWatchTransfers)
 	router.POST("/send", s.PostSend)
+	router.GET("/tx/:hash", s.GetTx)
 
 	// Swagger — mounted only when built with `-tags swagger`
 	mountSwagger(router)

@@ -2,14 +2,18 @@ package api
 
 import (
 	"context"
+	"log/slog"
 	"math/big"
+	"net/http"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/gin-gonic/gin"
 )
 
 type Sender interface {
 	Transfer(ctx context.Context, to common.Address, amount *big.Int) (common.Hash, error)
+	Status(ctx context.Context, hash common.Hash) (string, error)
 }
 
 type sendRequest struct {
@@ -42,4 +46,22 @@ func (s *Server) PostSend(c *gin.Context) {
 	}
 
 	c.JSON(200, gin.H{"tx_hash": txHash.Hex()})
+}
+
+func (s *Server) GetTx(c *gin.Context) {
+	h := c.Param("hash")
+	b, err := hexutil.Decode(h)
+	if err != nil || len(b) != common.HashLength {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid tx hash"})
+		return
+	}
+
+	status, err := s.sender.Status(c.Request.Context(), common.HexToHash(h))
+	if err != nil {
+		slog.Error("tx status", "hash", h, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "status lookup failed"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"tx_hash": h, "status": status})
 }

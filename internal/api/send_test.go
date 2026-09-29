@@ -18,6 +18,7 @@ type fakeSender struct {
 	called bool
 	to     common.Address
 	amount *big.Int
+	status string
 }
 
 func (f *fakeSender) Transfer(ctx context.Context, to common.Address, amount *big.Int) (common.Hash, error) {
@@ -25,6 +26,10 @@ func (f *fakeSender) Transfer(ctx context.Context, to common.Address, amount *bi
 	f.to = to
 	f.amount = amount
 	return f.hash, f.err
+}
+
+func (f *fakeSender) Status(ctx context.Context, hash common.Hash) (string, error) {
+	return f.status, f.err
 }
 
 func newSendTestServer(f *fakeSender) *Server {
