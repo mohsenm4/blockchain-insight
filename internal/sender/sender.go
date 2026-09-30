@@ -13,12 +13,14 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/mohsenm4/blockchain-insight/internal/contracts/erc20"
+	"github.com/mohsenm4/blockchain-insight/internal/nonce"
 )
 
 type ERC20Sender struct {
-	client *ethclient.Client
-	token  *erc20.ERC20
-	auth   *bind.TransactOpts
+	client       *ethclient.Client
+	token        *erc20.ERC20
+	auth         *bind.TransactOpts
+	nonceManager *nonce.NonceManager
 }
 
 // setup: runs once at startup
@@ -45,10 +47,14 @@ func NewERC20Sender(ctx context.Context, client *ethclient.Client, tokenAddr, pr
 		return nil, err
 	}
 
+	// Initialize the nonce manager for this sender
+	nonceManager := nonce.NewNonceManager(auth.From, client)
+
 	return &ERC20Sender{
-		token:  token,
-		auth:   auth,
-		client: client,
+		token:        token,
+		auth:         auth,
+		client:       client,
+		nonceManager: nonceManager,
 	}, nil
 }
 
@@ -70,8 +76,16 @@ func (s *ERC20Sender) Transfer(ctx context.Context, to common.Address, amount *b
 	opts := *s.auth
 	opts.Context = ctx
 
+	// Get the next nonce from the nonce manager
+	nonce, err := s.nonceManager.NextNonce(ctx)
+	if err != nil {
+		return common.Hash{}, err
+	}
+	opts.Nonce = new(big.Int).SetUint64(nonce)
+
 	tx, err := s.token.Transfer(&opts, to, amount)
 	if err != nil {
+		s.nonceManager.Reset()
 		return common.Hash{}, err
 	}
 	return tx.Hash(), nil

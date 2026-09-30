@@ -7,10 +7,10 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/gin-gonic/gin"
 	"github.com/mohsenm4/blockchain-insight/config"
 	"github.com/mohsenm4/blockchain-insight/internal/api"
 	"github.com/mohsenm4/blockchain-insight/internal/logging"
-	"github.com/gin-gonic/gin"
 )
 
 // @title Blockchain Insight API
@@ -39,8 +39,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	slog.Info("server starting", "addr", ":5050", "env", env)
-	if err := server.Start(ctx, ":5050"); err != nil {
+	// TODO: Make the server port configurable via environment variable or config file
+	port := ":8080"
+	slog.Info("server starting", "addr", port, "env", env)
+	if err := server.Start(ctx, port); err != nil {
 		slog.Error("server exited", "err", err)
 		os.Exit(1)
 	}
