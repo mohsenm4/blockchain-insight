@@ -93,6 +93,27 @@ docker compose down
 
 The `Makefile` also exposes `make docker-build`, `make docker-run`, and `make docker-stop` for running the image without Compose.
 
+## Database
+
+The ledger runs on Postgres 16 from `docker-compose.yml`. Data lives in the named volume `pgdata`, so it survives `docker compose down` (use `down -v` to wipe it).
+
+The host port is **5433**, not 5432, so it does not clash with a local Postgres install.
+
+Migrations live in `migrations/` and run with [goose](https://github.com/pressly/goose):
+
+```bash
+go install github.com/pressly/goose/v3/cmd/goose@latest
+
+docker compose up -d postgres
+goose -dir migrations postgres "postgres://insight:insight@localhost:5433/ledger?sslmode=disable" up
+```
+
+Inspect the schema:
+
+```bash
+docker compose exec postgres psql -U insight -d ledger -c '\d deposits'
+```
+
 ## Project layout
 
 ```text
@@ -103,6 +124,7 @@ internal/enth/  Ethereum client wrapper (go-ethereum)
 internal/models/ response types
 internal/utils/ formatting helpers
 docs/           generated Swagger files
+migrations/     goose SQL migrations (ledger schema)
 ```
 
 ## Design notes
