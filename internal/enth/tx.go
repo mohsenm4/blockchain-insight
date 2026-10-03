@@ -3,9 +3,9 @@ package enth
 import (
 	"context"
 
-	"github.com/mohsenm4/blockchain-insight/internal/models"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/mohsenm4/blockchain-insight/internal/models"
 )
 
 func (c *Client) GetTxByHash(hash string) (*types.Transaction, error) {

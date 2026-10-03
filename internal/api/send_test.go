@@ -38,8 +38,8 @@ func newSendTestServer(f *fakeSender) *Server {
 	return s
 }
 
-func performRequest(r http.Handler, method, path, body string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(method, path, strings.NewReader(body))
+func postJSON(r http.Handler, path, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -51,7 +51,7 @@ func TestPostSendInvalidAddress(t *testing.T) {
 	s := newSendTestServer(f)
 
 	// Simulate a POST request with an invalid address
-	w := performRequest(s.router, "POST", "/send", `{"to":"invalid_address","amount":"1000"}`)
+	w := postJSON(s.router, "/send", `{"to":"invalid_address","amount":"1000"}`)
 
 	if w.Code != 400 {
 		t.Errorf("expected status 400, got %d", w.Code)
@@ -66,7 +66,7 @@ func TestPostSendInvalidAmount(t *testing.T) {
 	s := newSendTestServer(f)
 
 	// Simulate a POST request with an invalid amount
-	w := performRequest(s.router, "POST", "/send", `{"to":"0x0000000000000000000000000000000000000000","amount":"invalid_amount"}`)
+	w := postJSON(s.router, "/send", `{"to":"0x0000000000000000000000000000000000000000","amount":"invalid_amount"}`)
 
 	if w.Code != 400 {
 		t.Errorf("expected status 400, got %d", w.Code)
@@ -81,7 +81,7 @@ func TestPostSendOK(t *testing.T) {
 	s := newSendTestServer(f)
 
 	// Simulate a POST request with a valid address and amount
-	w := performRequest(s.router, "POST", "/send", `{"to":"0x0000000000000000000000000000000000000000","amount":"1000"}`)
+	w := postJSON(s.router, "/send", `{"to":"0x0000000000000000000000000000000000000000","amount":"1000"}`)
 
 	if w.Code != 200 {
 		t.Errorf("expected status 200, got %d", w.Code)
@@ -106,7 +106,7 @@ func TestPostSendSenderError(t *testing.T) {
 	s := newSendTestServer(f)
 
 	// Simulate a POST request with a valid address and amount
-	w := performRequest(s.router, "POST", "/send", `{"to":"0x0000000000000000000000000000000000000000","amount":"1000"}`)
+	w := postJSON(s.router, "/send", `{"to":"0x0000000000000000000000000000000000000000","amount":"1000"}`)
 
 	if w.Code != 500 {
 		t.Errorf("expected status 500, got %d", w.Code)

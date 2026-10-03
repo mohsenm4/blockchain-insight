@@ -6,11 +6,11 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/mohsenm4/blockchain-insight/internal/contracts/erc20"
-	"github.com/mohsenm4/blockchain-insight/internal/watch"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/gin-gonic/gin"
+	"github.com/mohsenm4/blockchain-insight/internal/contracts/erc20"
+	"github.com/mohsenm4/blockchain-insight/internal/watch"
 )
 
 type watchRequest struct {

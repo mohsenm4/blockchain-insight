@@ -3,8 +3,8 @@
 package api
 
 import (
-	_ "github.com/mohsenm4/blockchain-insight/docs"
 	"github.com/gin-gonic/gin"
+	_ "github.com/mohsenm4/blockchain-insight/docs"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 )

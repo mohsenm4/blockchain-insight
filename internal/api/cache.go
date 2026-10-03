@@ -1,8 +1,8 @@
 package api
 
 import (
-	"github.com/mohsenm4/blockchain-insight/internal/models"
 	"github.com/gin-gonic/gin"
+	"github.com/mohsenm4/blockchain-insight/internal/models"
 )
 
 func (s *Server) Cache() gin.HandlerFunc {

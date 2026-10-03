@@ -4,8 +4,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/mohsenm4/blockchain-insight/internal/models"
 	"github.com/gin-gonic/gin"
+	"github.com/mohsenm4/blockchain-insight/internal/models"
 )
 
 // GetBlockById godoc
