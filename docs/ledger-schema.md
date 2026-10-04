@@ -2,20 +2,20 @@
 
 ## deposits
 
-| column                 | type                           | why                                                           |
-| ---------------------- | ------------------------------ | ------------------------------------------------------------- |
-| id                     | BIGSERIAL PK                   | Internal identifier                                           |
-| user_id                | BIGINT                         | Identifies the owner of the deposit                           |
-| address                | TEXT                           | Identifies the deposit address                                |
-| tx_hash                | TEXT                           | Identifies the blockchain transaction                         |
-| log_index              | INTEGER                        | Identifies the specific Transfer event within the transaction |
-| token                  | TEXT                           | Identifies the token                                          |
-| amount                 | NUMERIC(78,0)                  | Stores large token amounts exactly                            |
-| block_number           | BIGINT                         | Identifies the block containing the deposit                   |
-| block_hash             | TEXT                           | Allows reorg detection                                        |
-| status                 | pending / confirmed / reverted | Tracks the deposit lifecycle                                  |
-| credited_at_block      | BIGINT                         | Records the block in which the deposit became credited        |
-| created_at, updated_at | TIMESTAMP                      | Useful for auditing and detecting stuck records               |
+| column                 | type                                      | why                                                           |
+| ---------------------- | ----------------------------------------- | ------------------------------------------------------------- |
+| id                     | BIGSERIAL PK                              | Internal identifier                                           |
+| user_id                | BIGINT                                    | Identifies the owner of the deposit                           |
+| address                | TEXT                                      | Identifies the deposit address                                |
+| tx_hash                | TEXT                                      | Identifies the blockchain transaction                         |
+| log_index              | INTEGER                                   | Identifies the specific Transfer event within the transaction |
+| token                  | TEXT                                      | Identifies the token                                          |
+| amount                 | NUMERIC(78,0)                             | Stores large token amounts exactly                            |
+| block_number           | BIGINT                                    | Identifies the block containing the deposit                   |
+| block_hash             | TEXT                                      | Allows reorg detection                                        |
+| status                 | pending / confirmed / credited / reverted | Tracks the deposit lifecycle                                  |
+| credited_at_block      | BIGINT                                    | Records the block in which the deposit became credited        |
+| created_at, updated_at | TIMESTAMP                                 | Useful for auditing and detecting stuck records               |
 
 **UNIQUE (tx_hash, log_index) — why:**
 A transaction can contain multiple Transfer events. `tx_hash` alone is not enough, and `log_index` alone is not enough because the log index starts again for each transaction.
@@ -69,6 +69,9 @@ The client sends the same `idempotency_key` when retrying. Postgres enforces `UN
 ### Deposit
 
 `pending → confirmed → credited`
+
+- `confirmed` — chain fact: the deposit has N confirmations.
+- `credited` — money fact: the user's balance was increased, exactly once. `credited_at_block` is set here.
 
 `pending / confirmed → reverted` when a reorg removes the deposit from the canonical chain.
 
