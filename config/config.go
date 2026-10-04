@@ -12,10 +12,12 @@ type Config struct {
 	TimeoutSec   int    `mapstructure:"timeout_sec"`
 	TokenAddress string `mapstructure:"token_address"`
 	PrivateKey   string `mapstructure:"private_key"`
+	DatabaseURL  string `mapstructure:"database_url"`
 }
 
 var ErrMissingRPCURL = errors.New("RPC_URL must be set (via app.env or environment)")
 var ErrMissingPrivateKey = errors.New("PRIVATE_KEY must be set (via app.env or environment)")
+var ErrMissingDatabaseURL = errors.New("DATABASE_URL must be set (via app.env or environment)")
 
 func LoadConfig(path string) (config Config, err error) {
 	viper.AddConfigPath(path)
@@ -41,5 +43,11 @@ func LoadConfig(path string) (config Config, err error) {
 		err = ErrMissingPrivateKey
 		return
 	}
+
+	if config.DatabaseURL == "" {
+		err = ErrMissingDatabaseURL
+		return
+	}
+
 	return
 }
