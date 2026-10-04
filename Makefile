@@ -1,5 +1,5 @@
 IMAGE_NAME := blockchain-insight
-ENV_FILE := $(PWD)/cmd/app.env
+ENV_FILE := $(PWD)/app.env
 
 docker-build:
 	docker build -t $(IMAGE_NAME):latest .
