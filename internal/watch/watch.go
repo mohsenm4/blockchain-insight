@@ -15,11 +15,12 @@ type Source interface {
 }
 
 type Transfer struct {
-	Block    uint64
-	Index    uint
-	From, To common.Address
-	Value    *big.Int
-	Tx       common.Hash
+	Block     uint64
+	BlockHash common.Hash // lets the ledger detect reorgs
+	Index     uint
+	From, To  common.Address
+	Value     *big.Int
+	Tx        common.Hash
 }
 
 // Run polls src every interval and sends new transfers to out until ctx is

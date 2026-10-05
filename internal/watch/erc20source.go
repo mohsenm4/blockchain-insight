@@ -51,12 +51,13 @@ func (s ERC20Source) Transfers(ctx context.Context, from, to uint64) ([]Transfer
 	for iter.Next() {
 		ev := iter.Event
 		trs = append(trs, Transfer{
-			Block: ev.Raw.BlockNumber,
-			Index: ev.Raw.Index,
-			From:  ev.From,
-			To:    ev.To,
-			Value: new(big.Int).Set(ev.Value),
-			Tx:    ev.Raw.TxHash,
+			Block:     ev.Raw.BlockNumber,
+			BlockHash: ev.Raw.BlockHash,
+			Index:     ev.Raw.Index,
+			From:      ev.From,
+			To:        ev.To,
+			Value:     new(big.Int).Set(ev.Value),
+			Tx:        ev.Raw.TxHash,
 		})
 	}
 	if err := iter.Error(); err != nil {
