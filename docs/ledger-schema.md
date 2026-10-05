@@ -28,6 +28,18 @@ For reorgs, I would **keep the same deposit row and update its status**, rather 
 
 The important permanent fact is `credited_at_block`: it records the block at which the deposit was actually credited.
 
+## deposit_addresses
+
+| column     | type      | why                                                     |
+| ---------- | --------- | ------------------------------------------------------- |
+| address    | TEXT PK   | The deposit address, stored lowercase                   |
+| user_id    | BIGINT    | The user who owns the address                           |
+| created_at | TIMESTAMP | When the address was assigned                           |
+
+**How a Transfer finds its user:** each user gets their own deposit address. The watcher looks up `Transfer.To` here. If the address is not in the table, the transfer is not a deposit and is skipped.
+
+`address` is the primary key, so one address can never belong to two users. It is stored lowercase (enforced by a `CHECK`) so lookups don't depend on checksum casing.
+
 ## withdrawals
 
 | column                 | type                                    | why                                                                  |
