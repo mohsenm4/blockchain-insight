@@ -2,6 +2,7 @@ package ledger
 
 import (
 	"context"
+	"errors"
 	"math/big"
 	"os"
 	"testing"
@@ -82,7 +83,7 @@ func TestUserByAddress(t *testing.T) {
 
 	// Same leftover/cleanup pattern as TestInsertDepositTwice.
 	deleteRow := func() {
-		if _, err := pool.Exec(ctx, `DELETE FROM deposit_addresses WHERE address = $1`, addressKey(addr)); err != nil {
+		if _, err := pool.Exec(ctx, `DELETE FROM deposit_addresses WHERE address = $1`, AddressKey(addr)); err != nil {
 			t.Errorf("cleanup: %v", err)
 		}
 	}
@@ -107,7 +108,106 @@ func TestUserByAddress(t *testing.T) {
 	}
 
 	// An address must never move to another user.
-	if err := l.AssignAddress(ctx, 7, addr); err == nil {
-		t.Fatal("re-assign to another user: err = nil, want error")
+	if err := l.AssignAddress(ctx, 7, addr); !errors.Is(err, ErrAddressTaken) {
+		t.Fatalf("re-assign to another user: err = %v, want ErrAddressTaken", err)
 	}
+}
+
+func TestRecordBatch(t *testing.T) {
+	ctx := context.Background()
+	pool := testPool(t)
+	l := New(pool)
+
+	const cursor = "test-record-batch"
+	addr := common.HexToAddress("0x00000000000000000000000000000000000000B1")
+	big1, _ := new(big.Int).SetString("123456789012345678901234567890", 10)
+	deps := []Deposit{
+		{UserID: 1, Address: AddressKey(addr), TxHash: "0xtest-batch", LogIndex: 0,
+			Token: "USDC", Amount: big1, BlockNumber: 10, BlockHash: "0xb10"},
+		{UserID: 1, Address: AddressKey(addr), TxHash: "0xtest-batch", LogIndex: 1,
+			Token: "USDC", Amount: big.NewInt(5), BlockNumber: 10, BlockHash: "0xb10"},
+	}
+	cleanupBatch(t, pool, cursor, "0xtest-batch")
+
+	if _, found, err := l.Cursor(ctx, cursor); err != nil || found {
+		t.Fatalf("cursor before first batch: found = %v, err = %v; want false, nil", found, err)
+	}
+
+	inserted, err := l.RecordBatch(ctx, cursor, 10, deps)
+	if err != nil {
+		t.Fatalf("1st batch: %v", err)
+	}
+	if inserted != 2 {
+		t.Fatalf("1st batch: inserted = %d, want 2", inserted)
+	}
+
+	// Same deposits again (e.g. after a restart): nothing new, cursor still moves.
+	inserted, err = l.RecordBatch(ctx, cursor, 11, deps)
+	if err != nil {
+		t.Fatalf("2nd batch: %v", err)
+	}
+	if inserted != 0 {
+		t.Fatalf("2nd batch: inserted = %d, want 0", inserted)
+	}
+
+	block, found, err := l.Cursor(ctx, cursor)
+	if err != nil || !found || block != 11 {
+		t.Fatalf("cursor = (%d, %v, %v), want (11, true, nil)", block, found, err)
+	}
+
+	got, err := l.DepositsByAddress(ctx, addr)
+	if err != nil {
+		t.Fatalf("deposits by address: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("deposits = %d, want 2", len(got))
+	}
+	if got[0].Amount.Cmp(big1) != 0 || got[0].Status != "pending" {
+		t.Fatalf("deposit 0: amount = %s, status = %q; want %s, pending", got[0].Amount, got[0].Status, big1)
+	}
+}
+
+func TestRecordBatchRollsBack(t *testing.T) {
+	ctx := context.Background()
+	pool := testPool(t)
+	l := New(pool)
+
+	const cursor = "test-record-batch-rollback"
+	ok := Deposit{UserID: 1, Address: "0xb2", TxHash: "0xtest-rollback", LogIndex: 0,
+		Token: "USDC", Amount: big.NewInt(1), BlockNumber: 20, BlockHash: "0xb20"}
+	bad := ok
+	bad.LogIndex, bad.Amount = 1, nil // violates amount NOT NULL
+	cleanupBatch(t, pool, cursor, "0xtest-rollback")
+
+	if _, err := l.RecordBatch(ctx, cursor, 20, []Deposit{ok, bad}); err == nil {
+		t.Fatal("batch with a bad deposit: err = nil, want error")
+	}
+
+	// Nothing from the failed batch may stick: not the good deposit, not the cursor.
+	var n int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM deposits WHERE tx_hash = $1`, ok.TxHash).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("rows = %d, want 0", n)
+	}
+	if _, found, err := l.Cursor(ctx, cursor); err != nil || found {
+		t.Fatalf("cursor after failed batch: found = %v, err = %v; want false, nil", found, err)
+	}
+}
+
+// cleanupBatch removes a test's deposits and cursor before and after it runs.
+func cleanupBatch(t *testing.T, pool *pgxpool.Pool, cursor, txHash string) {
+	t.Helper()
+	ctx := context.Background()
+	del := func() {
+		if _, err := pool.Exec(ctx, `DELETE FROM deposits WHERE tx_hash = $1`, txHash); err != nil {
+			t.Errorf("cleanup deposits: %v", err)
+		}
+		if _, err := pool.Exec(ctx, `DELETE FROM watcher_cursor WHERE name = $1`, cursor); err != nil {
+			t.Errorf("cleanup cursor: %v", err)
+		}
+	}
+	del()
+	t.Cleanup(del)
 }
