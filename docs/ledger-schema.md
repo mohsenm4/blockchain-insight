@@ -40,6 +40,18 @@ The important permanent fact is `credited_at_block`: it records the block at whi
 
 `address` is the primary key, so one address can never belong to two users. It is stored lowercase (enforced by a `CHECK`) so lookups don't depend on checksum casing.
 
+## watcher_cursor
+
+| column     | type      | why                                              |
+| ---------- | --------- | ------------------------------------------------ |
+| name       | TEXT PK   | Which watcher, e.g. `erc20:<token address>`      |
+| block      | BIGINT    | The last block this watcher has fully processed  |
+| updated_at | TIMESTAMP | Shows when the watcher last made progress        |
+
+On restart the watcher resumes from `block + 1` instead of from the chain head, so no blocks are skipped while it was down. On its first run there is no row, so it starts from the current head.
+
+**Deposits and the cursor are saved in one transaction.** If the process crashes in between, both roll back. The cursor can never point past a deposit that was not saved. The opposite case, a deposit that is saved twice after a retry, is harmless: `UNIQUE (tx_hash, log_index)` turns it into a no-op.
+
 ## withdrawals
 
 | column                 | type                                    | why                                                                  |
