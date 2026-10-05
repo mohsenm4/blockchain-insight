@@ -2,7 +2,7 @@ package watch
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"math/big"
 	"time"
 
@@ -23,35 +23,42 @@ type Transfer struct {
 	Tx        common.Hash
 }
 
-// Run polls src every interval and sends new transfers to out until ctx is
-// cancelled. It returns ctx.Err() on cancellation. Run never closes out;
-// the owner of the channel does.
-func Run(ctx context.Context, src Source, interval time.Duration, out chan<- Transfer) error {
-	last, err := src.BlockNumber(ctx)
-	if err != nil {
-		return err
-	}
+// Batch is what Run found in blocks From..To (inclusive).
+type Batch struct {
+	From, To  uint64
+	Transfers []Transfer
+}
 
+// Handler processes one batch. Run moves past a batch only when its handler
+// returns nil; on error the same blocks are retried on the next poll.
+type Handler func(ctx context.Context, b Batch) error
+
+// maxBlockRange caps the blocks per Transfers call: RPC nodes reject large
+// eth_getLogs ranges, which happens when catching up after downtime.
+const maxBlockRange = 500
+
+// Run polls src every interval and hands every block after last to handle,
+// in order, until ctx is cancelled. It returns ctx.Err() on cancellation.
+func Run(ctx context.Context, src Source, last uint64, interval time.Duration, handle Handler) error {
 	for {
 		head, err := src.BlockNumber(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			log.Println("error getting block number:", err)
+			slog.Warn("get block number", "err", err)
 		} else if head > last {
-			trs, err := src.Transfers(ctx, last+1, head)
-			if err != nil {
-				log.Println("error filtering transfers:", err)
-			} else {
-				for _, tr := range trs {
-					select {
-					case out <- tr:
-					case <-ctx.Done():
-						return ctx.Err()
-					}
+			to := min(head, last+maxBlockRange)
+			if err := process(ctx, src, last+1, to, handle); err != nil {
+				if ctx.Err() != nil {
+					return ctx.Err()
 				}
-				last = head
+				slog.Warn("process blocks", "from", last+1, "to", to, "err", err)
+			} else {
+				last = to
+				if last < head {
+					continue // still catching up: don't wait
+				}
 			}
 		}
 
@@ -61,4 +68,12 @@ func Run(ctx context.Context, src Source, interval time.Duration, out chan<- Tra
 			return ctx.Err()
 		}
 	}
+}
+
+func process(ctx context.Context, src Source, from, to uint64, handle Handler) error {
+	trs, err := src.Transfers(ctx, from, to)
+	if err != nil {
+		return err
+	}
+	return handle(ctx, Batch{From: from, To: to, Transfers: trs})
 }

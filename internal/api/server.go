@@ -14,7 +14,6 @@ import (
 	"github.com/mohsenm4/blockchain-insight/config"
 	"github.com/mohsenm4/blockchain-insight/internal/enth"
 	"github.com/mohsenm4/blockchain-insight/internal/sender"
-	"github.com/mohsenm4/blockchain-insight/internal/watch"
 	"github.com/patrickmn/go-cache"
 	"golang.org/x/sync/singleflight"
 )
@@ -25,13 +24,13 @@ type Server struct {
 	router  *gin.Engine
 	cach    *cache.Cache
 	sfGroup singleflight.Group
-	store   *watch.Store
+	ledger  Ledger
 	sender  Sender
 }
 
 const LastBlock = "last_block"
 
-func NewServer(config config.Config) *Server {
+func NewServer(config config.Config, lg Ledger) *Server {
 	client, err := enth.NewClient(config.RPCURL)
 	if err != nil {
 		log.Fatal(err)
@@ -46,7 +45,7 @@ func NewServer(config config.Config) *Server {
 		client: client,
 		config: config,
 		cach:   cach,
-		store:  watch.NewStore(),
+		ledger: lg,
 		sender: snd,
 	}
 

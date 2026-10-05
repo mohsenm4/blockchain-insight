@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/mohsenm4/blockchain-insight/config"
 	"github.com/mohsenm4/blockchain-insight/internal/api"
+	"github.com/mohsenm4/blockchain-insight/internal/ledger"
 	"github.com/mohsenm4/blockchain-insight/internal/logging"
 )
 
@@ -47,7 +48,7 @@ func main() {
 	}
 	slog.Info("db connected")
 
-	server := api.NewServer(cfg)
+	server := api.NewServer(cfg, ledger.New(pool))
 
 	if err := server.StartWatcher(ctx); err != nil {
 		slog.Error("start watcher", "err", err)

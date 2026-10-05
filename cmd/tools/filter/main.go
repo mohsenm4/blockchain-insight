@@ -41,17 +41,21 @@ func main() {
 		log.Fatal(err)
 	}
 
-	out := make(chan watch.Transfer)
-	defer close(out) // owner of the channel closes it
+	src := watch.NewERC20Source(client, token)
+	head, err := src.BlockNumber(ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	go func() {
-		for tr := range out {
+	printBatch := func(ctx context.Context, b watch.Batch) error {
+		for _, tr := range b.Transfers {
 			fmt.Printf("block=%d idx=%d %s -> %s value=%s tx=%s\n",
 				tr.Block, tr.Index, tr.From.Hex(), tr.To.Hex(), tr.Value, tr.Tx.Hex())
 		}
-	}()
+		return nil
+	}
 
-	if err := watch.Run(ctx, watch.NewERC20Source(client, token), 10*time.Second, out); err != nil {
+	if err := watch.Run(ctx, src, head, 10*time.Second, printBatch); err != nil {
 		log.Println("watcher stopped:", err)
 	}
 }
