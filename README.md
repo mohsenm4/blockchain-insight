@@ -15,12 +15,14 @@ Actively developed. Runs locally against a public RPC endpoint. Cached, race-tes
 
 ## Endpoints
 
-| Method | Path                    | Description                                     |
-|--------|-------------------------|-------------------------------------------------|
-| GET    | `/last/block`           | Latest block. Response is cached in memory.     |
-| GET    | `/block/:id`            | Block by number.                                |
-| GET    | `/balance/:address`     | ETH balance of an address in wei.               |
-| GET    | `/swagger/*`            | Swagger UI for the API.                         |
+| Method | Path                        | Description                                                                 |
+|--------|-----------------------------|-----------------------------------------------------------------------------|
+| GET    | `/last/block`               | Latest block. Response is cached in memory.                                 |
+| GET    | `/block/:id`                | Block by number.                                                            |
+| GET    | `/balance/:address`         | ETH balance of an address in wei.                                           |
+| POST   | `/watch`                    | Assign a deposit address to a user: `{"address", "user_id"}`. 409 if taken. |
+| GET    | `/watch/:address/transfers` | Deposits recorded for an address, from Postgres.                            |
+| GET    | `/swagger/*`                | Swagger UI for the API.                                                     |
 
 ## Requirements
 
