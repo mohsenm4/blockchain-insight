@@ -59,7 +59,7 @@ On restart the watcher resumes from `block + 1` instead of from the chain head, 
 | id                     | BIGSERIAL PK                            | Internal identifier                                                  |
 | user_id                | BIGINT                                  | Identifies the owner of the withdrawal                               |
 | idempotency_key        | TEXT                                    | Prevents the same client request from being executed twice           |
-| to                     | TEXT                                    | Destination address                                                  |
+| to_address             | TEXT                                    | Destination address, lowercase (`to` is a reserved word in SQL)      |
 | token                  | TEXT                                    | Identifies the token                                                 |
 | amount                 | NUMERIC(78,0)                           | Stores the withdrawal amount exactly                                 |
 | nonce                  | BIGINT                                  | Identifies the transaction sequence for the sending wallet           |
