@@ -22,7 +22,7 @@ Actively developed. Runs locally against a public RPC endpoint. Cached, race-tes
 | GET    | `/balance/:address`         | ETH balance of an address in wei.                                           |
 | POST   | `/watch`                    | Assign a deposit address to a user: `{"address", "user_id"}`. 409 if taken. |
 | GET    | `/watch/:address/transfers` | Deposits recorded for an address, from Postgres.                            |
-| POST   | `/send`                     | Send tokens: `{"user_id", "idempotency_key", "to", "amount"}`. Same key = no resend; 409 while in progress, 422 if reused for a different request. |
+| POST   | `/send`                     | Send tokens: `{"user_id", "idempotency_key", "to", "amount"}`. Same key never signs a second tx (it may resend the first one if its state is unknown); 409 while in progress, 422 if reused for a different request. |
 | GET    | `/tx/:hash`                 | Status of a sent transaction.                                               |
 | GET    | `/swagger/*`                | Swagger UI for the API.                                                     |
 

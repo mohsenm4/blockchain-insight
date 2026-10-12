@@ -24,7 +24,9 @@ type Ledger interface {
 	RecordBatch(ctx context.Context, name string, block uint64, deps []ledger.Deposit) (inserted int, err error)
 	CreateWithdrawal(ctx context.Context, w ledger.Withdrawal) (id int64, created bool, err error)
 	WithdrawalByKey(ctx context.Context, userID int64, key string) (w ledger.Withdrawal, found bool, err error)
+	MarkSigned(ctx context.Context, id int64, nonce uint64, txHash, rawTx string) error
 	MarkBroadcast(ctx context.Context, id int64, txHash string) error
+	MarkFailed(ctx context.Context, id int64) error
 }
 
 type watchRequest struct {

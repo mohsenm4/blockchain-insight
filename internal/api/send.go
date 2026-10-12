@@ -9,12 +9,17 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/gin-gonic/gin"
 	"github.com/mohsenm4/blockchain-insight/internal/ledger"
+	"github.com/mohsenm4/blockchain-insight/internal/sender"
 )
 
 type Sender interface {
-	Transfer(ctx context.Context, to common.Address, amount *big.Int) (common.Hash, error)
+	Sign(ctx context.Context, to common.Address, amount *big.Int) (*types.Transaction, error)
+	Broadcast(ctx context.Context, tx *types.Transaction) error
+	Check(ctx context.Context, tx *types.Transaction) (sender.TxState, error)
+	ResetNonce()
 	Status(ctx context.Context, hash common.Hash) (string, error)
 }
 
@@ -71,26 +76,97 @@ func (s *Server) PostSend(c *gin.Context) {
 		return
 	}
 
-	txHash, err := s.sender.Transfer(ctx, common.HexToAddress(req.To), amount)
+	// Sign and save before sending: once the hash is stored, a broadcast
+	// that fails halfway can be checked on the chain instead of guessed.
+	tx, err := s.sender.Sign(ctx, common.HexToAddress(req.To), amount)
 	if err != nil {
-		// The row stays queued: the tx may or may not have left, so a retry
-		// with this key must not send again.
-		slog.Error("transfer", "withdrawal", id, "err", err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "transfer failed"})
+		// Nothing was signed, so nothing left.
+		slog.Error("sign", "withdrawal", id, "err", err)
+		s.markFailed(ctx, id)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "transfer failed", "id": id, "status": "failed"})
+		return
+	}
+	raw, err := tx.MarshalBinary()
+	if err == nil {
+		err = s.ledger.MarkSigned(ctx, id, tx.Nonce(), tx.Hash().Hex(), hexutil.Encode(raw))
+	}
+	if err != nil {
+		// Not saved, so never sent: give its nonce back.
+		slog.Error("mark signed", "withdrawal", id, "tx", tx.Hash().Hex(), "err", err)
+		s.sender.ResetNonce()
+		s.markFailed(ctx, id)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "transfer failed", "id": id, "status": "failed"})
 		return
 	}
 
-	// The money is out: record it even if the client has gone away.
-	if err := s.ledger.MarkBroadcast(context.WithoutCancel(ctx), id, txHash.Hex()); err != nil {
-		// Still answer with the hash. A 500 here could make the client retry
-		// with a new key and pay twice.
-		slog.Error("mark broadcast", "withdrawal", id, "tx", txHash.Hex(), "err", err)
+	// The tx may reach the node even if this request is cancelled now.
+	ctx = context.WithoutCancel(ctx)
+	if err := s.sender.Broadcast(ctx, tx); err != nil {
+		slog.Warn("broadcast", "withdrawal", id, "tx", tx.Hash().Hex(), "err", err)
+		// Next Sign reads the nonce from the chain; if this tx lands
+		// after all, the chain counts it.
+		s.sender.ResetNonce()
+		s.settleSigned(c, id, tx)
+		return
 	}
-	c.JSON(http.StatusOK, withdrawalResponse{ID: id, Status: "broadcast", TxHash: txHash.Hex()})
+	s.markBroadcast(ctx, id, tx)
+	c.JSON(http.StatusOK, withdrawalResponse{ID: id, Status: "broadcast", TxHash: tx.Hash().Hex()})
+}
+
+// settleSigned answers for a signed withdrawal whose broadcast failed or
+// was interrupted. It asks the chain whether tx left, and resends the same
+// tx if it still can land: same nonce, so it pays at most once.
+func (s *Server) settleSigned(c *gin.Context, id int64, tx *types.Transaction) {
+	ctx := context.WithoutCancel(c.Request.Context())
+	hash := tx.Hash().Hex()
+	unknown := func(err error) {
+		slog.Error("settle withdrawal", "withdrawal", id, "tx", hash, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": "transfer state unknown, retry with the same key", "id": id, "status": "signed", "tx_hash": hash,
+		})
+	}
+
+	state, err := s.sender.Check(ctx, tx)
+	if err != nil {
+		unknown(err)
+		return
+	}
+	switch state {
+	case sender.TxSent:
+		slog.Info("settle withdrawal: tx is on the network", "withdrawal", id, "tx", hash)
+	case sender.TxDropped:
+		slog.Warn("settle withdrawal: nonce taken by another tx", "withdrawal", id, "tx", hash, "nonce", tx.Nonce())
+		s.markFailed(ctx, id)
+		c.JSON(http.StatusOK, withdrawalResponse{ID: id, Status: "failed", TxHash: hash})
+		return
+	case sender.TxNotSeen:
+		if err := s.sender.Broadcast(ctx, tx); err != nil {
+			unknown(err)
+			return
+		}
+		slog.Info("settle withdrawal: resent", "withdrawal", id, "tx", hash)
+	}
+	s.markBroadcast(ctx, id, tx)
+	c.JSON(http.StatusOK, withdrawalResponse{ID: id, Status: "broadcast", TxHash: hash})
+}
+
+// markBroadcast records that tx left. A failure is only logged: the money
+// is out, and a 500 could make the client retry with a new key and pay
+// twice.
+func (s *Server) markBroadcast(ctx context.Context, id int64, tx *types.Transaction) {
+	if err := s.ledger.MarkBroadcast(ctx, id, tx.Hash().Hex()); err != nil {
+		slog.Error("mark broadcast", "withdrawal", id, "tx", tx.Hash().Hex(), "err", err)
+	}
+}
+
+func (s *Server) markFailed(ctx context.Context, id int64) {
+	if err := s.ledger.MarkFailed(context.WithoutCancel(ctx), id); err != nil {
+		slog.Error("mark failed", "withdrawal", id, "err", err)
+	}
 }
 
 // replayWithdrawal answers a request whose idempotency key was used before,
-// from the stored row. It never sends.
+// from the stored row. It only ever resends the tx signed the first time.
 func (s *Server) replayWithdrawal(c *gin.Context, req ledger.Withdrawal) {
 	w, found, err := s.ledger.WithdrawalByKey(c.Request.Context(), req.UserID, req.IdempotencyKey)
 	if err == nil && !found {
@@ -106,13 +182,33 @@ func (s *Server) replayWithdrawal(c *gin.Context, req ledger.Withdrawal) {
 		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "idempotency_key already used for a different request"})
 		return
 	}
-	if w.Status == "queued" {
-		// The first request is still sending, or died before it could
-		// record the result. Either way there is no answer to give yet.
+	switch w.Status {
+	case "queued":
+		// The first request is still signing. Nothing has left yet.
 		c.JSON(http.StatusConflict, gin.H{"error": "withdrawal in progress, retry later", "id": w.ID, "status": w.Status})
-		return
+	case "signed":
+		tx, err := decodeTx(w.RawTx)
+		if err != nil {
+			slog.Error("decode signed tx", "withdrawal", w.ID, "err", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "could not load withdrawal"})
+			return
+		}
+		s.settleSigned(c, w.ID, tx)
+	default:
+		c.JSON(http.StatusOK, withdrawalResponse{ID: w.ID, Status: w.Status, TxHash: w.TxHash})
 	}
-	c.JSON(http.StatusOK, withdrawalResponse{ID: w.ID, Status: w.Status, TxHash: w.TxHash})
+}
+
+func decodeTx(raw string) (*types.Transaction, error) {
+	b, err := hexutil.Decode(raw)
+	if err != nil {
+		return nil, err
+	}
+	tx := new(types.Transaction)
+	if err := tx.UnmarshalBinary(b); err != nil {
+		return nil, err
+	}
+	return tx, nil
 }
 
 func (s *Server) GetTx(c *gin.Context) {

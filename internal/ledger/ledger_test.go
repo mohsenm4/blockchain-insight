@@ -262,11 +262,29 @@ func TestCreateWithdrawalTwice(t *testing.T) {
 		t.Fatalf("by key = %+v, want queued row %d", got, id)
 	}
 
+	if err := l.MarkBroadcast(ctx, id, "0xtest-withdrawal-tx"); !errors.Is(err, ErrNotSigned) {
+		t.Fatalf("broadcast before sign: err = %v, want ErrNotSigned", err)
+	}
+	if err := l.MarkSigned(ctx, id, 7, "0xtest-withdrawal-tx", "0xraw"); err != nil {
+		t.Fatalf("mark signed: %v", err)
+	}
+	if err := l.MarkSigned(ctx, id, 8, "0xother", "0xraw2"); !errors.Is(err, ErrNotQueued) {
+		t.Fatalf("2nd mark signed: err = %v, want ErrNotQueued", err)
+	}
+
+	got, _, err = l.WithdrawalByKey(ctx, w.UserID, w.IdempotencyKey)
+	if err != nil {
+		t.Fatalf("by key after sign: %v", err)
+	}
+	if got.Status != "signed" || got.TxHash != "0xtest-withdrawal-tx" || got.RawTx != "0xraw" {
+		t.Fatalf("after sign = %+v, want signed 0xtest-withdrawal-tx/0xraw", got)
+	}
+
+	if err := l.MarkBroadcast(ctx, id, "0xother"); !errors.Is(err, ErrNotSigned) {
+		t.Fatalf("broadcast other hash: err = %v, want ErrNotSigned", err)
+	}
 	if err := l.MarkBroadcast(ctx, id, "0xtest-withdrawal-tx"); err != nil {
 		t.Fatalf("mark broadcast: %v", err)
-	}
-	if err := l.MarkBroadcast(ctx, id, "0xother"); !errors.Is(err, ErrNotQueued) {
-		t.Fatalf("2nd mark broadcast: err = %v, want ErrNotQueued", err)
 	}
 
 	got, _, err = l.WithdrawalByKey(ctx, w.UserID, w.IdempotencyKey)

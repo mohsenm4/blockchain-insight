@@ -34,7 +34,8 @@ type Withdrawal struct {
 	To             string
 	Token          string
 	Amount         *big.Int
-	TxHash         string // empty until broadcast
+	TxHash         string // empty until signed
+	RawTx          string // signed tx, hex; empty until signed
 	Status         string // set by the DB; ignored on insert
 }
 
@@ -43,6 +44,10 @@ var ErrAddressTaken = errors.New("address already assigned")
 
 // ErrNotQueued means the withdrawal is missing or has already left 'queued'.
 var ErrNotQueued = errors.New("withdrawal not queued")
+
+// ErrNotSigned means the withdrawal is missing, has already left 'signed', or
+// was signed as a different tx.
+var ErrNotSigned = errors.New("withdrawal not signed")
 
 // uniqueViolation is the Postgres error code for a UNIQUE/PK conflict.
 const uniqueViolation = "23505"
@@ -228,13 +233,13 @@ func (l *Ledger) CreateWithdrawal(ctx context.Context, w Withdrawal) (id int64, 
 func (l *Ledger) WithdrawalByKey(ctx context.Context, userID int64, key string) (w Withdrawal, found bool, err error) {
 	// amount as text: see DepositsByAddress.
 	const q = `
-		SELECT id, user_id, idempotency_key, to_address, token, amount::text, COALESCE(tx_hash, ''), status
+		SELECT id, user_id, idempotency_key, to_address, token, amount::text, COALESCE(tx_hash, ''), COALESCE(raw_tx, ''), status
 		FROM withdrawals
 		WHERE user_id = $1 AND idempotency_key = $2`
 
 	var amount string
 	err = l.pool.QueryRow(ctx, q, userID, key).Scan(&w.ID, &w.UserID, &w.IdempotencyKey,
-		&w.To, &w.Token, &amount, &w.TxHash, &w.Status)
+		&w.To, &w.Token, &amount, &w.TxHash, &w.RawTx, &w.Status)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Withdrawal{}, false, nil
 	}
@@ -248,20 +253,56 @@ func (l *Ledger) WithdrawalByKey(ctx context.Context, userID int64, key string) 
 	return w, true, nil
 }
 
-// MarkBroadcast records that withdrawal id was sent as txHash. It moves only
-// a queued row, so it returns ErrNotQueued if the row is missing or was
-// already marked.
+// MarkSigned stores the signed tx of withdrawal id before it is broadcast,
+// so after a failed or interrupted broadcast its hash can be looked up on
+// the chain. It moves only a queued row, else it returns ErrNotQueued.
+func (l *Ledger) MarkSigned(ctx context.Context, id int64, nonce uint64, txHash, rawTx string) error {
+	const q = `
+		UPDATE withdrawals SET status = 'signed', nonce = $2, tx_hash = $3, raw_tx = $4, updated_at = now()
+		WHERE id = $1 AND status = 'queued'`
+
+	tag, err := l.pool.Exec(ctx, q, id, nonce, txHash, rawTx)
+	if err != nil {
+		return fmt.Errorf("mark withdrawal %d signed: %w", id, err)
+	}
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("mark withdrawal %d signed: %w", id, ErrNotQueued)
+	}
+	return nil
+}
+
+// MarkBroadcast records that the signed tx txHash of withdrawal id is on
+// the network. It moves only a signed row with that hash, else it returns
+// ErrNotSigned.
 func (l *Ledger) MarkBroadcast(ctx context.Context, id int64, txHash string) error {
 	const q = `
-		UPDATE withdrawals SET status = 'broadcast', tx_hash = $2, updated_at = now()
-		WHERE id = $1 AND status = 'queued'`
+		UPDATE withdrawals SET status = 'broadcast', updated_at = now()
+		WHERE id = $1 AND status = 'signed' AND tx_hash = $2`
 
 	tag, err := l.pool.Exec(ctx, q, id, txHash)
 	if err != nil {
 		return fmt.Errorf("mark withdrawal %d broadcast: %w", id, err)
 	}
 	if tag.RowsAffected() != 1 {
-		return fmt.Errorf("mark withdrawal %d broadcast: %w", id, ErrNotQueued)
+		return fmt.Errorf("mark withdrawal %d broadcast: %w", id, ErrNotSigned)
+	}
+	return nil
+}
+
+// MarkFailed records that withdrawal id never sent and never will: it was
+// not signed, or its nonce went to another tx. It moves only a queued or
+// signed row, else it returns ErrNotQueued.
+func (l *Ledger) MarkFailed(ctx context.Context, id int64) error {
+	const q = `
+		UPDATE withdrawals SET status = 'failed', updated_at = now()
+		WHERE id = $1 AND status IN ('queued', 'signed')`
+
+	tag, err := l.pool.Exec(ctx, q, id)
+	if err != nil {
+		return fmt.Errorf("mark withdrawal %d failed: %w", id, err)
+	}
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("mark withdrawal %d failed: %w", id, ErrNotQueued)
 	}
 	return nil
 }

@@ -10,27 +10,53 @@ import (
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/mohsenm4/blockchain-insight/internal/ledger"
+	"github.com/mohsenm4/blockchain-insight/internal/sender"
 )
 
 type fakeSender struct {
-	hash   common.Hash
-	err    error
-	calls  int
-	to     common.Address
-	amount *big.Int
-	status string
+	signErr   error
+	sendErrs  []error // one per Broadcast call; nil or missing = success
+	state     sender.TxState
+	checkErr  error
+	status    string
+	statusErr error
+
+	signs, sends, checks, resets int
+	to                           common.Address
+	amount                       *big.Int
+	tx                           *types.Transaction
 }
 
-func (f *fakeSender) Transfer(ctx context.Context, to common.Address, amount *big.Int) (common.Hash, error) {
-	f.calls++
+func (f *fakeSender) Sign(ctx context.Context, to common.Address, amount *big.Int) (*types.Transaction, error) {
+	f.signs++
 	f.to = to
 	f.amount = amount
-	return f.hash, f.err
+	if f.signErr != nil {
+		return nil, f.signErr
+	}
+	f.tx = types.NewTx(&types.LegacyTx{Nonce: 7, To: &to, Gas: 60_000, GasPrice: big.NewInt(1), Data: amount.Bytes()})
+	return f.tx, nil
 }
 
+func (f *fakeSender) Broadcast(ctx context.Context, tx *types.Transaction) error {
+	f.sends++
+	if f.sends <= len(f.sendErrs) {
+		return f.sendErrs[f.sends-1]
+	}
+	return nil
+}
+
+func (f *fakeSender) Check(ctx context.Context, tx *types.Transaction) (sender.TxState, error) {
+	f.checks++
+	return f.state, f.checkErr
+}
+
+func (f *fakeSender) ResetNonce() { f.resets++ }
+
 func (f *fakeSender) Status(ctx context.Context, hash common.Hash) (string, error) {
-	return f.status, f.err
+	return f.status, f.statusErr
 }
 
 func newSendTestServer(f *fakeSender) (*Server, *fakeLedger) {
@@ -59,7 +85,7 @@ func TestPostSendInvalidAddress(t *testing.T) {
 	if w.Code != 400 {
 		t.Errorf("expected status 400, got %d", w.Code)
 	}
-	if f.calls != 0 {
+	if f.signs != 0 {
 		t.Errorf("expected sender not to be called")
 	}
 }
@@ -73,7 +99,7 @@ func TestPostSendInvalidAmount(t *testing.T) {
 	if w.Code != 400 {
 		t.Errorf("expected status 400, got %d", w.Code)
 	}
-	if f.calls != 0 {
+	if f.signs != 0 {
 		t.Errorf("expected sender not to be called")
 	}
 }
@@ -87,13 +113,13 @@ func TestPostSendMissingKey(t *testing.T) {
 	if w.Code != 400 {
 		t.Errorf("expected status 400, got %d", w.Code)
 	}
-	if f.calls != 0 || len(lg.withdrawals) != 0 {
-		t.Errorf("expected no transfer and no row, got %d calls, %d rows", f.calls, len(lg.withdrawals))
+	if f.signs != 0 || len(lg.withdrawals) != 0 {
+		t.Errorf("expected no transfer and no row, got %d calls, %d rows", f.signs, len(lg.withdrawals))
 	}
 }
 
 func TestPostSendOK(t *testing.T) {
-	f := &fakeSender{hash: common.HexToHash("0xabc")}
+	f := &fakeSender{}
 	s, lg := newSendTestServer(f)
 
 	w := postJSON(s.router, "/send", sendOK)
@@ -101,10 +127,11 @@ func TestPostSendOK(t *testing.T) {
 	if w.Code != 200 {
 		t.Errorf("expected status 200, got %d", w.Code)
 	}
-	if f.calls != 1 {
-		t.Errorf("expected sender to be called once, got %d", f.calls)
+	if f.signs != 1 || f.sends != 1 {
+		t.Errorf("signs, sends = %d, %d, want 1, 1", f.signs, f.sends)
 	}
-	if !strings.Contains(w.Body.String(), f.hash.Hex()) {
+	hash := f.tx.Hash().Hex()
+	if !strings.Contains(w.Body.String(), hash) {
 		t.Errorf("expected tx_hash in body, got %s", w.Body.String())
 	}
 	if f.amount.String() != "1000" {
@@ -114,13 +141,13 @@ func TestPostSendOK(t *testing.T) {
 	if len(lg.withdrawals) != 1 {
 		t.Fatalf("rows = %d, want 1", len(lg.withdrawals))
 	}
-	if got := lg.withdrawals[0]; got.Status != "broadcast" || got.TxHash != f.hash.Hex() {
-		t.Errorf("row = %s/%s, want broadcast/%s", got.Status, got.TxHash, f.hash.Hex())
+	if got := lg.withdrawals[0]; got.Status != "broadcast" || got.TxHash != hash || got.RawTx == "" {
+		t.Errorf("row = %s/%s raw=%q, want broadcast/%s with raw tx", got.Status, got.TxHash, got.RawTx, hash)
 	}
 }
 
 func TestPostSendSameKeyTwice(t *testing.T) {
-	f := &fakeSender{hash: common.HexToHash("0xabc")}
+	f := &fakeSender{}
 	s, lg := newSendTestServer(f)
 
 	first := postJSON(s.router, "/send", sendOK)
@@ -129,8 +156,8 @@ func TestPostSendSameKeyTwice(t *testing.T) {
 	if first.Code != 200 || second.Code != 200 {
 		t.Fatalf("codes = %d, %d, want 200, 200", first.Code, second.Code)
 	}
-	if f.calls != 1 {
-		t.Errorf("Transfer called %d times, want 1", f.calls)
+	if f.signs != 1 || f.sends != 1 {
+		t.Errorf("signs, sends = %d, %d, want 1, 1", f.signs, f.sends)
 	}
 	if len(lg.withdrawals) != 1 {
 		t.Errorf("rows = %d, want 1", len(lg.withdrawals))
@@ -141,10 +168,10 @@ func TestPostSendSameKeyTwice(t *testing.T) {
 }
 
 func TestPostSendSameKeyInProgress(t *testing.T) {
-	f := &fakeSender{hash: common.HexToHash("0xabc")}
+	f := &fakeSender{}
 	s, lg := newSendTestServer(f)
 
-	// The first request has inserted its row but not broadcast yet.
+	// The first request has inserted its row but not signed yet.
 	lg.withdrawals = []ledger.Withdrawal{{
 		ID: 1, UserID: 1, IdempotencyKey: "k1",
 		To: ledger.AddressKey(common.Address{}), Amount: big.NewInt(1000), Status: "queued",
@@ -155,13 +182,13 @@ func TestPostSendSameKeyInProgress(t *testing.T) {
 	if w.Code != http.StatusConflict {
 		t.Errorf("expected status 409, got %d", w.Code)
 	}
-	if f.calls != 0 {
-		t.Errorf("Transfer called %d times, want 0", f.calls)
+	if f.signs != 0 || f.sends != 0 {
+		t.Errorf("signs, sends = %d, %d, want 0, 0", f.signs, f.sends)
 	}
 }
 
 func TestPostSendSameKeyOtherAmount(t *testing.T) {
-	f := &fakeSender{hash: common.HexToHash("0xabc")}
+	f := &fakeSender{}
 	s, _ := newSendTestServer(f)
 
 	postJSON(s.router, "/send", sendOK)
@@ -170,15 +197,14 @@ func TestPostSendSameKeyOtherAmount(t *testing.T) {
 	if w.Code != http.StatusUnprocessableEntity {
 		t.Errorf("expected status 422, got %d", w.Code)
 	}
-	if f.calls != 1 {
-		t.Errorf("Transfer called %d times, want 1", f.calls)
+	if f.signs != 1 || f.sends != 1 {
+		t.Errorf("signs, sends = %d, %d, want 1, 1", f.signs, f.sends)
 	}
 }
 
-func TestPostSendSenderError(t *testing.T) {
-	f := &fakeSender{
-		err: errors.New("sender error"),
-	}
+// Case A for sure: signing failed, so no tx exists.
+func TestPostSendSignError(t *testing.T) {
+	f := &fakeSender{signErr: errors.New("next nonce: dial tcp: no such host")}
 	s, lg := newSendTestServer(f)
 
 	w := postJSON(s.router, "/send", sendOK)
@@ -186,24 +212,96 @@ func TestPostSendSenderError(t *testing.T) {
 	if w.Code != 500 {
 		t.Errorf("expected status 500, got %d", w.Code)
 	}
-	if f.calls != 1 {
-		t.Errorf("expected sender to be called once, got %d", f.calls)
+	if f.sends != 0 {
+		t.Errorf("sends = %d, want 0", f.sends)
 	}
-	// The tx may have left anyway, so the row stays queued and a retry
-	// must not send again.
-	if len(lg.withdrawals) != 1 || lg.withdrawals[0].Status != "queued" {
-		t.Fatalf("withdrawals = %+v, want one queued row", lg.withdrawals)
+	if len(lg.withdrawals) != 1 || lg.withdrawals[0].Status != "failed" {
+		t.Fatalf("withdrawals = %+v, want one failed row", lg.withdrawals)
 	}
-	if w := postJSON(s.router, "/send", sendOK); w.Code != http.StatusConflict {
-		t.Errorf("retry: expected status 409, got %d", w.Code)
+	retry := postJSON(s.router, "/send", sendOK)
+	if retry.Code != 200 || !strings.Contains(retry.Body.String(), `"status":"failed"`) {
+		t.Errorf("retry = %d %s, want 200 failed", retry.Code, retry.Body.String())
 	}
-	if f.calls != 1 {
-		t.Errorf("retry: Transfer called %d times, want 1", f.calls)
+	if f.signs != 1 {
+		t.Errorf("retry signed again: signs = %d, want 1", f.signs)
+	}
+}
+
+// Case B: the broadcast errored but the node had taken the tx.
+func TestPostSendBroadcastErrorButSent(t *testing.T) {
+	f := &fakeSender{sendErrs: []error{errors.New("timeout")}, state: sender.TxSent}
+	s, lg := newSendTestServer(f)
+
+	w := postJSON(s.router, "/send", sendOK)
+
+	if w.Code != 200 {
+		t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if f.sends != 1 || f.checks != 1 {
+		t.Errorf("sends, checks = %d, %d, want 1, 1", f.sends, f.checks)
+	}
+	if got := lg.withdrawals[0]; got.Status != "broadcast" || got.TxHash != f.tx.Hash().Hex() {
+		t.Errorf("row = %s/%s, want broadcast/%s", got.Status, got.TxHash, f.tx.Hash().Hex())
+	}
+}
+
+// The chain cannot be asked: the row stays signed, and a retry with the
+// same key resends the same tx, not a new one.
+func TestPostSendStateUnknownThenRetry(t *testing.T) {
+	f := &fakeSender{sendErrs: []error{errors.New("no such host")}, checkErr: errors.New("no such host")}
+	s, lg := newSendTestServer(f)
+
+	w := postJSON(s.router, "/send", sendOK)
+
+	if w.Code != 500 || !strings.Contains(w.Body.String(), `"status":"signed"`) {
+		t.Fatalf("first = %d %s, want 500 signed", w.Code, w.Body.String())
+	}
+	if f.resets != 1 {
+		t.Errorf("resets = %d, want 1", f.resets)
+	}
+	if got := lg.withdrawals[0]; got.Status != "signed" {
+		t.Fatalf("row status = %s, want signed", got.Status)
+	}
+
+	// Network back; the chain has not seen the tx.
+	f.checkErr, f.state = nil, sender.TxNotSeen
+	retry := postJSON(s.router, "/send", sendOK)
+
+	if retry.Code != 200 || !strings.Contains(retry.Body.String(), f.tx.Hash().Hex()) {
+		t.Fatalf("retry = %d %s, want 200 with first tx hash", retry.Code, retry.Body.String())
+	}
+	if f.signs != 1 || f.sends != 2 {
+		t.Errorf("signs, sends = %d, %d, want 1, 2 (same tx resent)", f.signs, f.sends)
+	}
+	if got := lg.withdrawals[0]; got.Status != "broadcast" {
+		t.Errorf("row status = %s, want broadcast", got.Status)
+	}
+}
+
+// Case A, found later: another tx took the nonce, so this one can never
+// land.
+func TestPostSendDroppedOnRetry(t *testing.T) {
+	f := &fakeSender{sendErrs: []error{errors.New("no such host")}, checkErr: errors.New("no such host")}
+	s, lg := newSendTestServer(f)
+
+	postJSON(s.router, "/send", sendOK)
+
+	f.checkErr, f.state = nil, sender.TxDropped
+	retry := postJSON(s.router, "/send", sendOK)
+
+	if retry.Code != 200 || !strings.Contains(retry.Body.String(), `"status":"failed"`) {
+		t.Fatalf("retry = %d %s, want 200 failed", retry.Code, retry.Body.String())
+	}
+	if f.sends != 1 {
+		t.Errorf("sends = %d, want 1 (a dropped tx is not resent)", f.sends)
+	}
+	if got := lg.withdrawals[0]; got.Status != "failed" {
+		t.Errorf("row status = %s, want failed", got.Status)
 	}
 }
 
 func TestPostSendLedgerError(t *testing.T) {
-	f := &fakeSender{hash: common.HexToHash("0xabc")}
+	f := &fakeSender{}
 	s, lg := newSendTestServer(f)
 	lg.err = errors.New("db down")
 
@@ -212,7 +310,7 @@ func TestPostSendLedgerError(t *testing.T) {
 	if w.Code != 500 {
 		t.Errorf("expected status 500, got %d", w.Code)
 	}
-	if f.calls != 0 {
+	if f.signs != 0 {
 		t.Errorf("expected sender not to be called")
 	}
 }

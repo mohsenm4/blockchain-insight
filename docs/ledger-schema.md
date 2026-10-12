@@ -63,8 +63,9 @@ On restart the watcher resumes from `block + 1` instead of from the chain head, 
 | token                  | TEXT                                    | Identifies the token                                                 |
 | amount                 | NUMERIC(78,0)                           | Stores the withdrawal amount exactly                                 |
 | nonce                  | BIGINT                                  | Identifies the transaction sequence for the sending wallet           |
-| tx_hash                | TEXT                                    | Identifies the blockchain transaction after broadcast                |
-| status                 | queued / broadcast / confirmed / failed | Tracks the withdrawal lifecycle                                      |
+| tx_hash                | TEXT                                    | Identifies the blockchain transaction, known once it is signed       |
+| raw_tx                 | TEXT                                    | The signed tx, hex, so the exact same tx can be resent               |
+| status                 | queued / signed / broadcast / confirmed / failed | Tracks the withdrawal lifecycle                             |
 | created_at, updated_at | TIMESTAMP                               | Allows detection of stuck withdrawals and provides audit information |
 
 **UNIQUE (user_id, idempotency_key) — why:**
@@ -105,11 +106,21 @@ If the transaction is included again:
 
 ### Withdrawal
 
-`queued → broadcast → confirmed`
+`queued → signed → broadcast → confirmed`
 
-If the transaction cannot be successfully broadcast:
+- `queued` — row created, nothing signed yet. Nothing can have left.
+- `signed` — the tx is signed and its hash and raw bytes are saved, **before** it is sent. From here on the money may have left.
+
+If signing fails (no nonce, gas estimate failed), no tx exists, so it surely did not leave:
 
 `queued → failed`
+
+If the broadcast errors, the error alone cannot tell whether the node took the tx (a timeout can come after the node accepted it). So the row stays `signed` and the chain is asked:
+
+1. The hash is in the mempool or a block → it left: `signed → broadcast`.
+2. The hash is unknown and its nonce is still free → it may still land, so the **same** raw tx is resent. Same nonce, so it pays at most once: `signed → broadcast`.
+3. The hash is unknown and another tx used its nonce → it can never land: `signed → failed`.
+4. The chain cannot be asked (network down) → stays `signed`. A retry with the same key runs these checks again.
 
 If the broadcast transaction fails on-chain:
 

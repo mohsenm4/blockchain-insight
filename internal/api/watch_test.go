@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -102,18 +103,37 @@ func (f *fakeLedger) WithdrawalByKey(ctx context.Context, userID int64, key stri
 	return ledger.Withdrawal{}, false, nil
 }
 
-func (f *fakeLedger) MarkBroadcast(ctx context.Context, id int64, txHash string) error {
+// setStatus moves row id from one of from to status, or returns errWrong.
+func (f *fakeLedger) setStatus(id int64, from []string, status string, errWrong error, edit func(*ledger.Withdrawal) bool) error {
 	if f.err != nil {
 		return f.err
 	}
 	for i, w := range f.withdrawals {
-		if w.ID == id && w.Status == "queued" {
-			f.withdrawals[i].Status = "broadcast"
-			f.withdrawals[i].TxHash = txHash
+		if w.ID == id && slices.Contains(from, w.Status) && edit(&f.withdrawals[i]) {
+			f.withdrawals[i].Status = status
 			return nil
 		}
 	}
-	return ledger.ErrNotQueued
+	return errWrong
+}
+
+func (f *fakeLedger) MarkSigned(ctx context.Context, id int64, nonce uint64, txHash, rawTx string) error {
+	return f.setStatus(id, []string{"queued"}, "signed", ledger.ErrNotQueued, func(w *ledger.Withdrawal) bool {
+		w.TxHash, w.RawTx = txHash, rawTx
+		return true
+	})
+}
+
+func (f *fakeLedger) MarkBroadcast(ctx context.Context, id int64, txHash string) error {
+	return f.setStatus(id, []string{"signed"}, "broadcast", ledger.ErrNotSigned, func(w *ledger.Withdrawal) bool {
+		return w.TxHash == txHash
+	})
+}
+
+func (f *fakeLedger) MarkFailed(ctx context.Context, id int64) error {
+	return f.setStatus(id, []string{"queued", "signed"}, "failed", ledger.ErrNotQueued, func(*ledger.Withdrawal) bool {
+		return true
+	})
 }
 
 func newTestServer() (*Server, *fakeLedger) {
