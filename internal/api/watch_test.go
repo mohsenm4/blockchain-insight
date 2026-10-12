@@ -17,10 +17,11 @@ import (
 
 // fakeLedger is an in-memory Ledger.
 type fakeLedger struct {
-	owners   map[common.Address]int64
-	deposits []ledger.Deposit
-	cursor   map[string]uint64
-	err      error // returned by every call when set
+	owners      map[common.Address]int64
+	deposits    []ledger.Deposit
+	cursor      map[string]uint64
+	withdrawals []ledger.Withdrawal
+	err         error // returned by every call when set
 }
 
 func newFakeLedger() *fakeLedger {
@@ -74,6 +75,45 @@ func (f *fakeLedger) RecordBatch(ctx context.Context, name string, block uint64,
 	f.deposits = append(f.deposits, deps...)
 	f.cursor[name] = block
 	return len(deps), nil
+}
+
+func (f *fakeLedger) CreateWithdrawal(ctx context.Context, w ledger.Withdrawal) (int64, bool, error) {
+	if f.err != nil {
+		return 0, false, f.err
+	}
+	if _, found, _ := f.WithdrawalByKey(ctx, w.UserID, w.IdempotencyKey); found {
+		return 0, false, nil
+	}
+	w.ID = int64(len(f.withdrawals) + 1)
+	w.Status = "queued"
+	f.withdrawals = append(f.withdrawals, w)
+	return w.ID, true, nil
+}
+
+func (f *fakeLedger) WithdrawalByKey(ctx context.Context, userID int64, key string) (ledger.Withdrawal, bool, error) {
+	if f.err != nil {
+		return ledger.Withdrawal{}, false, f.err
+	}
+	for _, w := range f.withdrawals {
+		if w.UserID == userID && w.IdempotencyKey == key {
+			return w, true, nil
+		}
+	}
+	return ledger.Withdrawal{}, false, nil
+}
+
+func (f *fakeLedger) MarkBroadcast(ctx context.Context, id int64, txHash string) error {
+	if f.err != nil {
+		return f.err
+	}
+	for i, w := range f.withdrawals {
+		if w.ID == id && w.Status == "queued" {
+			f.withdrawals[i].Status = "broadcast"
+			f.withdrawals[i].TxHash = txHash
+			return nil
+		}
+	}
+	return ledger.ErrNotQueued
 }
 
 func newTestServer() (*Server, *fakeLedger) {

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"math/big"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/gin-gonic/gin"
+	"github.com/mohsenm4/blockchain-insight/internal/ledger"
 )
 
 type Sender interface {
@@ -17,10 +19,21 @@ type Sender interface {
 }
 
 type sendRequest struct {
-	To     string `json:"to" binding:"required"`
-	Amount string `json:"amount" binding:"required"`
+	UserID         int64  `json:"user_id" binding:"required,gt=0"`
+	IdempotencyKey string `json:"idempotency_key" binding:"required,max=255"`
+	To             string `json:"to" binding:"required"`
+	Amount         string `json:"amount" binding:"required"`
 }
 
+type withdrawalResponse struct {
+	ID     int64  `json:"id"`
+	Status string `json:"status"`
+	TxHash string `json:"tx_hash,omitempty"`
+}
+
+// PostSend sends tokens at most once per (user_id, idempotency_key). A
+// retried request gets the first request's result instead of a second
+// transfer.
 func (s *Server) PostSend(c *gin.Context) {
 	var req sendRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -39,13 +52,67 @@ func (s *Server) PostSend(c *gin.Context) {
 		return
 	}
 
-	txHash, err := s.sender.Transfer(c.Request.Context(), common.HexToAddress(req.To), amount)
+	ctx := c.Request.Context()
+	w := ledger.Withdrawal{
+		UserID:         req.UserID,
+		IdempotencyKey: req.IdempotencyKey,
+		To:             ledger.AddressKey(common.HexToAddress(req.To)),
+		Token:          ledger.AddressKey(common.HexToAddress(s.config.TokenAddress)),
+		Amount:         amount,
+	}
+	id, created, err := s.ledger.CreateWithdrawal(ctx, w)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		slog.Error("create withdrawal", "user_id", req.UserID, "key", req.IdempotencyKey, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not create withdrawal"})
+		return
+	}
+	if !created {
+		s.replayWithdrawal(c, w)
 		return
 	}
 
-	c.JSON(200, gin.H{"tx_hash": txHash.Hex()})
+	txHash, err := s.sender.Transfer(ctx, common.HexToAddress(req.To), amount)
+	if err != nil {
+		// The row stays queued: the tx may or may not have left, so a retry
+		// with this key must not send again.
+		slog.Error("transfer", "withdrawal", id, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "transfer failed"})
+		return
+	}
+
+	// The money is out: record it even if the client has gone away.
+	if err := s.ledger.MarkBroadcast(context.WithoutCancel(ctx), id, txHash.Hex()); err != nil {
+		// Still answer with the hash. A 500 here could make the client retry
+		// with a new key and pay twice.
+		slog.Error("mark broadcast", "withdrawal", id, "tx", txHash.Hex(), "err", err)
+	}
+	c.JSON(http.StatusOK, withdrawalResponse{ID: id, Status: "broadcast", TxHash: txHash.Hex()})
+}
+
+// replayWithdrawal answers a request whose idempotency key was used before,
+// from the stored row. It never sends.
+func (s *Server) replayWithdrawal(c *gin.Context, req ledger.Withdrawal) {
+	w, found, err := s.ledger.WithdrawalByKey(c.Request.Context(), req.UserID, req.IdempotencyKey)
+	if err == nil && !found {
+		err = errors.New("conflict on insert but no row") // rows are never deleted
+	}
+	if err != nil {
+		slog.Error("withdrawal by key", "user_id", req.UserID, "key", req.IdempotencyKey, "err", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not load withdrawal"})
+		return
+	}
+
+	if w.To != req.To || w.Amount.Cmp(req.Amount) != 0 {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "idempotency_key already used for a different request"})
+		return
+	}
+	if w.Status == "queued" {
+		// The first request is still sending, or died before it could
+		// record the result. Either way there is no answer to give yet.
+		c.JSON(http.StatusConflict, gin.H{"error": "withdrawal in progress, retry later", "id": w.ID, "status": w.Status})
+		return
+	}
+	c.JSON(http.StatusOK, withdrawalResponse{ID: w.ID, Status: w.Status, TxHash: w.TxHash})
 }
 
 func (s *Server) GetTx(c *gin.Context) {
