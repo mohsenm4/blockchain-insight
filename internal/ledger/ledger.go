@@ -25,8 +25,24 @@ type Deposit struct {
 	Status      string // set by the DB; ignored on insert
 }
 
+// Withdrawal is a user's request to send tokens out. To and Token are
+// stored lowercase (see AddressKey).
+type Withdrawal struct {
+	ID             int64 // set by the DB; ignored on insert
+	UserID         int64
+	IdempotencyKey string
+	To             string
+	Token          string
+	Amount         *big.Int
+	TxHash         string // empty until broadcast
+	Status         string // set by the DB; ignored on insert
+}
+
 // ErrAddressTaken means the address already belongs to a user.
 var ErrAddressTaken = errors.New("address already assigned")
+
+// ErrNotQueued means the withdrawal is missing or has already left 'queued'.
+var ErrNotQueued = errors.New("withdrawal not queued")
 
 // uniqueViolation is the Postgres error code for a UNIQUE/PK conflict.
 const uniqueViolation = "23505"
@@ -185,4 +201,67 @@ func (l *Ledger) RecordBatch(ctx context.Context, name string, block uint64, dep
 		return 0, fmt.Errorf("commit: %w", err)
 	}
 	return inserted, nil
+}
+
+// CreateWithdrawal queues w. created is false when userID already has a
+// withdrawal with the same idempotency key: nothing is written and id is 0.
+func (l *Ledger) CreateWithdrawal(ctx context.Context, w Withdrawal) (id int64, created bool, err error) {
+	const q = `
+		INSERT INTO withdrawals (user_id, idempotency_key, to_address, token, amount)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (user_id, idempotency_key) DO NOTHING
+		RETURNING id`
+
+	err = l.pool.QueryRow(ctx, q, w.UserID, w.IdempotencyKey, w.To, w.Token, w.Amount).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		// DO NOTHING on conflict returns no row: the key was used before.
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("create withdrawal %d/%s: %w", w.UserID, w.IdempotencyKey, err)
+	}
+	return id, true, nil
+}
+
+// WithdrawalByKey returns the withdrawal userID created with key. found is
+// false when there is none.
+func (l *Ledger) WithdrawalByKey(ctx context.Context, userID int64, key string) (w Withdrawal, found bool, err error) {
+	// amount as text: see DepositsByAddress.
+	const q = `
+		SELECT id, user_id, idempotency_key, to_address, token, amount::text, COALESCE(tx_hash, ''), status
+		FROM withdrawals
+		WHERE user_id = $1 AND idempotency_key = $2`
+
+	var amount string
+	err = l.pool.QueryRow(ctx, q, userID, key).Scan(&w.ID, &w.UserID, &w.IdempotencyKey,
+		&w.To, &w.Token, &amount, &w.TxHash, &w.Status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Withdrawal{}, false, nil
+	}
+	if err != nil {
+		return Withdrawal{}, false, fmt.Errorf("withdrawal %d/%s: %w", userID, key, err)
+	}
+	var ok bool
+	if w.Amount, ok = new(big.Int).SetString(amount, 10); !ok {
+		return Withdrawal{}, false, fmt.Errorf("withdrawal %d: bad amount %q", w.ID, amount)
+	}
+	return w, true, nil
+}
+
+// MarkBroadcast records that withdrawal id was sent as txHash. It moves only
+// a queued row, so it returns ErrNotQueued if the row is missing or was
+// already marked.
+func (l *Ledger) MarkBroadcast(ctx context.Context, id int64, txHash string) error {
+	const q = `
+		UPDATE withdrawals SET status = 'broadcast', tx_hash = $2, updated_at = now()
+		WHERE id = $1 AND status = 'queued'`
+
+	tag, err := l.pool.Exec(ctx, q, id, txHash)
+	if err != nil {
+		return fmt.Errorf("mark withdrawal %d broadcast: %w", id, err)
+	}
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("mark withdrawal %d broadcast: %w", id, ErrNotQueued)
+	}
+	return nil
 }

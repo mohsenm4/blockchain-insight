@@ -211,3 +211,69 @@ func cleanupBatch(t *testing.T, pool *pgxpool.Pool, cursor, txHash string) {
 	del()
 	t.Cleanup(del)
 }
+
+func TestCreateWithdrawalTwice(t *testing.T) {
+	ctx := context.Background()
+	pool := testPool(t)
+
+	l := New(pool)
+	w := Withdrawal{
+		UserID: 1, IdempotencyKey: "test-create-withdrawal-twice",
+		To: "0xabc", Token: "0xtoken", Amount: big.NewInt(1_000_000),
+	}
+
+	deleteRow := func() {
+		if _, err := pool.Exec(ctx, `DELETE FROM withdrawals WHERE idempotency_key = $1`, w.IdempotencyKey); err != nil {
+			t.Errorf("cleanup: %v", err)
+		}
+	}
+	deleteRow()
+	t.Cleanup(deleteRow)
+
+	id, created, err := l.CreateWithdrawal(ctx, w)
+	if err != nil {
+		t.Fatalf("1st create: %v", err)
+	}
+	if !created || id == 0 {
+		t.Fatalf("1st create: id=%d created=%v, want new row", id, created)
+	}
+
+	_, created, err = l.CreateWithdrawal(ctx, w)
+	if err != nil {
+		t.Fatalf("2nd create: %v", err)
+	}
+	if created {
+		t.Fatal("2nd create: created = true, want false")
+	}
+
+	var n int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM withdrawals WHERE idempotency_key = $1`, w.IdempotencyKey).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("rows = %d, want 1", n)
+	}
+
+	got, found, err := l.WithdrawalByKey(ctx, w.UserID, w.IdempotencyKey)
+	if err != nil || !found {
+		t.Fatalf("by key: found=%v err=%v", found, err)
+	}
+	if got.ID != id || got.Status != "queued" || got.TxHash != "" || got.Amount.Cmp(w.Amount) != 0 {
+		t.Fatalf("by key = %+v, want queued row %d", got, id)
+	}
+
+	if err := l.MarkBroadcast(ctx, id, "0xtest-withdrawal-tx"); err != nil {
+		t.Fatalf("mark broadcast: %v", err)
+	}
+	if err := l.MarkBroadcast(ctx, id, "0xother"); !errors.Is(err, ErrNotQueued) {
+		t.Fatalf("2nd mark broadcast: err = %v, want ErrNotQueued", err)
+	}
+
+	got, _, err = l.WithdrawalByKey(ctx, w.UserID, w.IdempotencyKey)
+	if err != nil {
+		t.Fatalf("by key after broadcast: %v", err)
+	}
+	if got.Status != "broadcast" || got.TxHash != "0xtest-withdrawal-tx" {
+		t.Fatalf("after broadcast = %s/%s, want broadcast/0xtest-withdrawal-tx", got.Status, got.TxHash)
+	}
+}
