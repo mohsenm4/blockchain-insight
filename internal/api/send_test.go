@@ -66,8 +66,8 @@ func newSendTestServer(f *fakeSender) (*Server, *fakeLedger) {
 	return s, lg
 }
 
-func postJSON(r http.Handler, path, body string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+func postSend(r http.Handler, body string) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, "/send", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -80,7 +80,7 @@ func TestPostSendInvalidAddress(t *testing.T) {
 	f := &fakeSender{}
 	s, _ := newSendTestServer(f)
 
-	w := postJSON(s.router, "/send", `{"user_id":1,"idempotency_key":"k1","to":"invalid_address","amount":"1000"}`)
+	w := postSend(s.router, `{"user_id":1,"idempotency_key":"k1","to":"invalid_address","amount":"1000"}`)
 
 	if w.Code != 400 {
 		t.Errorf("expected status 400, got %d", w.Code)
@@ -94,7 +94,7 @@ func TestPostSendInvalidAmount(t *testing.T) {
 	f := &fakeSender{}
 	s, _ := newSendTestServer(f)
 
-	w := postJSON(s.router, "/send", `{"user_id":1,"idempotency_key":"k1","to":"0x0000000000000000000000000000000000000000","amount":"invalid_amount"}`)
+	w := postSend(s.router, `{"user_id":1,"idempotency_key":"k1","to":"0x0000000000000000000000000000000000000000","amount":"invalid_amount"}`)
 
 	if w.Code != 400 {
 		t.Errorf("expected status 400, got %d", w.Code)
@@ -108,7 +108,7 @@ func TestPostSendMissingKey(t *testing.T) {
 	f := &fakeSender{}
 	s, lg := newSendTestServer(f)
 
-	w := postJSON(s.router, "/send", `{"user_id":1,"to":"0x0000000000000000000000000000000000000000","amount":"1000"}`)
+	w := postSend(s.router, `{"user_id":1,"to":"0x0000000000000000000000000000000000000000","amount":"1000"}`)
 
 	if w.Code != 400 {
 		t.Errorf("expected status 400, got %d", w.Code)
@@ -122,7 +122,7 @@ func TestPostSendOK(t *testing.T) {
 	f := &fakeSender{}
 	s, lg := newSendTestServer(f)
 
-	w := postJSON(s.router, "/send", sendOK)
+	w := postSend(s.router, sendOK)
 
 	if w.Code != 200 {
 		t.Errorf("expected status 200, got %d", w.Code)
@@ -150,8 +150,8 @@ func TestPostSendSameKeyTwice(t *testing.T) {
 	f := &fakeSender{}
 	s, lg := newSendTestServer(f)
 
-	first := postJSON(s.router, "/send", sendOK)
-	second := postJSON(s.router, "/send", sendOK)
+	first := postSend(s.router, sendOK)
+	second := postSend(s.router, sendOK)
 
 	if first.Code != 200 || second.Code != 200 {
 		t.Fatalf("codes = %d, %d, want 200, 200", first.Code, second.Code)
@@ -177,7 +177,7 @@ func TestPostSendSameKeyInProgress(t *testing.T) {
 		To: ledger.AddressKey(common.Address{}), Amount: big.NewInt(1000), Status: "queued",
 	}}
 
-	w := postJSON(s.router, "/send", sendOK)
+	w := postSend(s.router, sendOK)
 
 	if w.Code != http.StatusConflict {
 		t.Errorf("expected status 409, got %d", w.Code)
@@ -191,8 +191,8 @@ func TestPostSendSameKeyOtherAmount(t *testing.T) {
 	f := &fakeSender{}
 	s, _ := newSendTestServer(f)
 
-	postJSON(s.router, "/send", sendOK)
-	w := postJSON(s.router, "/send", `{"user_id":1,"idempotency_key":"k1","to":"0x0000000000000000000000000000000000000000","amount":"2000"}`)
+	postSend(s.router, sendOK)
+	w := postSend(s.router, `{"user_id":1,"idempotency_key":"k1","to":"0x0000000000000000000000000000000000000000","amount":"2000"}`)
 
 	if w.Code != http.StatusUnprocessableEntity {
 		t.Errorf("expected status 422, got %d", w.Code)
@@ -207,7 +207,7 @@ func TestPostSendSignError(t *testing.T) {
 	f := &fakeSender{signErr: errors.New("next nonce: dial tcp: no such host")}
 	s, lg := newSendTestServer(f)
 
-	w := postJSON(s.router, "/send", sendOK)
+	w := postSend(s.router, sendOK)
 
 	if w.Code != 500 {
 		t.Errorf("expected status 500, got %d", w.Code)
@@ -218,7 +218,7 @@ func TestPostSendSignError(t *testing.T) {
 	if len(lg.withdrawals) != 1 || lg.withdrawals[0].Status != "failed" {
 		t.Fatalf("withdrawals = %+v, want one failed row", lg.withdrawals)
 	}
-	retry := postJSON(s.router, "/send", sendOK)
+	retry := postSend(s.router, sendOK)
 	if retry.Code != 200 || !strings.Contains(retry.Body.String(), `"status":"failed"`) {
 		t.Errorf("retry = %d %s, want 200 failed", retry.Code, retry.Body.String())
 	}
@@ -232,7 +232,7 @@ func TestPostSendBroadcastErrorButSent(t *testing.T) {
 	f := &fakeSender{sendErrs: []error{errors.New("timeout")}, state: sender.TxSent}
 	s, lg := newSendTestServer(f)
 
-	w := postJSON(s.router, "/send", sendOK)
+	w := postSend(s.router, sendOK)
 
 	if w.Code != 200 {
 		t.Errorf("expected status 200, got %d: %s", w.Code, w.Body.String())
@@ -251,7 +251,7 @@ func TestPostSendStateUnknownThenRetry(t *testing.T) {
 	f := &fakeSender{sendErrs: []error{errors.New("no such host")}, checkErr: errors.New("no such host")}
 	s, lg := newSendTestServer(f)
 
-	w := postJSON(s.router, "/send", sendOK)
+	w := postSend(s.router, sendOK)
 
 	if w.Code != 500 || !strings.Contains(w.Body.String(), `"status":"signed"`) {
 		t.Fatalf("first = %d %s, want 500 signed", w.Code, w.Body.String())
@@ -265,7 +265,7 @@ func TestPostSendStateUnknownThenRetry(t *testing.T) {
 
 	// Network back; the chain has not seen the tx.
 	f.checkErr, f.state = nil, sender.TxNotSeen
-	retry := postJSON(s.router, "/send", sendOK)
+	retry := postSend(s.router, sendOK)
 
 	if retry.Code != 200 || !strings.Contains(retry.Body.String(), f.tx.Hash().Hex()) {
 		t.Fatalf("retry = %d %s, want 200 with first tx hash", retry.Code, retry.Body.String())
@@ -284,10 +284,10 @@ func TestPostSendDroppedOnRetry(t *testing.T) {
 	f := &fakeSender{sendErrs: []error{errors.New("no such host")}, checkErr: errors.New("no such host")}
 	s, lg := newSendTestServer(f)
 
-	postJSON(s.router, "/send", sendOK)
+	postSend(s.router, sendOK)
 
 	f.checkErr, f.state = nil, sender.TxDropped
-	retry := postJSON(s.router, "/send", sendOK)
+	retry := postSend(s.router, sendOK)
 
 	if retry.Code != 200 || !strings.Contains(retry.Body.String(), `"status":"failed"`) {
 		t.Fatalf("retry = %d %s, want 200 failed", retry.Code, retry.Body.String())
@@ -305,7 +305,7 @@ func TestPostSendLedgerError(t *testing.T) {
 	s, lg := newSendTestServer(f)
 	lg.err = errors.New("db down")
 
-	w := postJSON(s.router, "/send", sendOK)
+	w := postSend(s.router, sendOK)
 
 	if w.Code != 500 {
 		t.Errorf("expected status 500, got %d", w.Code)
