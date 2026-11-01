@@ -7,12 +7,13 @@ import (
 )
 
 type Config struct {
-	RPCURL       string `mapstructure:"rpc_url"`
-	NetworkName  string `mapstructure:"network_name"`
-	TimeoutSec   int    `mapstructure:"timeout_sec"`
-	TokenAddress string `mapstructure:"token_address"`
-	PrivateKey   string `mapstructure:"private_key"`
-	DatabaseURL  string `mapstructure:"database_url"`
+	RPCURL        string `mapstructure:"rpc_url"`
+	ArchiveRPCURL string `mapstructure:"archive_rpc_url"`
+	NetworkName   string `mapstructure:"network_name"`
+	TimeoutSec    int    `mapstructure:"timeout_sec"`
+	TokenAddress  string `mapstructure:"token_address"`
+	PrivateKey    string `mapstructure:"private_key"`
+	DatabaseURL   string `mapstructure:"database_url"`
 }
 
 var ErrMissingRPCURL = errors.New("RPC_URL must be set (via app.env or environment)")

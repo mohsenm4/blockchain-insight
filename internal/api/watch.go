@@ -117,24 +117,48 @@ func (s *Server) StartWatcher(ctx context.Context) error {
 		client.Close()
 		return err
 	}
-	src := watch.NewERC20Source(client, token)
+	var src watch.Source = watch.NewERC20Source(client, token)
+
+	var archiveClient *ethclient.Client // stays nil when no archive is set
+	if s.config.ArchiveRPCURL != "" {
+		archiveClient, err = ethclient.DialContext(ctx, s.config.ArchiveRPCURL)
+		if err != nil {
+			client.Close()
+			return err
+		}
+		archiveToken, err := erc20.NewERC20(common.HexToAddress(sepoliaUSDC), archiveClient)
+		if err != nil {
+			archiveClient.Close()
+			client.Close()
+			return err
+		}
+		src = watch.NewFallbackSource(src, watch.NewERC20Source(archiveClient, archiveToken))
+		slog.Info("archive RPC enabled")
+	}
+
+	closeClients := func() {
+		client.Close()
+		if archiveClient != nil {
+			archiveClient.Close()
+		}
+	}
 
 	last, found, err := s.ledger.Cursor(ctx, watcherName)
 	if err != nil {
-		client.Close()
+		closeClients()
 		return err
 	}
 	if !found {
 		// First run: start from now instead of scanning the whole chain.
 		if last, err = src.BlockNumber(ctx); err != nil {
-			client.Close()
+			closeClients()
 			return err
 		}
 	}
 	slog.Info("watcher starting", "after_block", last, "resumed", found)
 
 	go func() {
-		defer client.Close()
+		defer closeClients()
 		if err := watch.Run(ctx, src, last, 10*time.Second, s.recordBatch); err != nil {
 			slog.Info("watcher stopped", "err", err)
 		}
