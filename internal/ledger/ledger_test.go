@@ -295,3 +295,58 @@ func TestCreateWithdrawalTwice(t *testing.T) {
 		t.Fatalf("after broadcast = %s/%s, want broadcast/0xtest-withdrawal-tx", got.Status, got.TxHash)
 	}
 }
+
+func TestMarkConfirmed(t *testing.T) {
+	ctx := context.Background()
+	pool := testPool(t)
+
+	l := New(pool)
+	d := Deposit{
+		UserID: 1, Address: "0xabc", TxHash: "0xtest-mark-confirmed", LogIndex: 0,
+		Token: "USDC", Amount: big.NewInt(1), BlockNumber: 100, BlockHash: "0xblock",
+	}
+	deleteRow := func() {
+		if _, err := pool.Exec(ctx, `DELETE FROM deposits WHERE tx_hash = $1`, d.TxHash); err != nil {
+			t.Errorf("cleanup: %v", err)
+		}
+	}
+	deleteRow()
+	t.Cleanup(deleteRow)
+
+	if _, err := l.InsertDeposit(ctx, d); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	find := func(maxBlock uint64) (Deposit, bool) {
+		deps, err := l.PendingDeposits(ctx, maxBlock)
+		if err != nil {
+			t.Fatalf("pending deposits: %v", err)
+		}
+		for _, p := range deps {
+			if p.TxHash == d.TxHash {
+				return p, true
+			}
+		}
+		return Deposit{}, false
+	}
+	if _, ok := find(99); ok {
+		t.Fatal("block 100 returned for maxBlock 99")
+	}
+	p, ok := find(100)
+	if !ok {
+		t.Fatal("pending deposit not returned for maxBlock 100")
+	}
+
+	if err := l.MarkConfirmed(ctx, p.ID, "0xother"); !errors.Is(err, ErrNotPending) {
+		t.Fatalf("wrong hash: err = %v, want ErrNotPending", err)
+	}
+	if err := l.MarkConfirmed(ctx, p.ID, d.BlockHash); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+	if err := l.MarkConfirmed(ctx, p.ID, d.BlockHash); !errors.Is(err, ErrNotPending) {
+		t.Fatalf("2nd confirm: err = %v, want ErrNotPending", err)
+	}
+	if _, ok := find(100); ok {
+		t.Fatal("confirmed deposit still returned as pending")
+	}
+}

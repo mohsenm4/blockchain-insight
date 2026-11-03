@@ -14,6 +14,7 @@ import (
 )
 
 type Deposit struct {
+	ID          int64 // set by the DB; ignored on insert
 	UserID      int64
 	Address     string
 	TxHash      string
@@ -48,6 +49,10 @@ var ErrNotQueued = errors.New("withdrawal not queued")
 // ErrNotSigned means the withdrawal is missing, has already left 'signed', or
 // was signed as a different tx.
 var ErrNotSigned = errors.New("withdrawal not signed")
+
+// ErrNotPending means the deposit is missing, has already left 'pending', or
+// is now in a block with a different hash.
+var ErrNotPending = errors.New("deposit not pending")
 
 // uniqueViolation is the Postgres error code for a UNIQUE/PK conflict.
 const uniqueViolation = "23505"
@@ -158,6 +163,53 @@ func (l *Ledger) DepositsByAddress(ctx context.Context, addr common.Address) ([]
 		return nil, fmt.Errorf("deposits by address %s: %w", addr.Hex(), err)
 	}
 	return deps, nil
+}
+
+// PendingDeposits returns the pending deposits in blocks up to maxBlock,
+// oldest first. Only ID, TxHash, LogIndex, BlockNumber and BlockHash are set.
+func (l *Ledger) PendingDeposits(ctx context.Context, maxBlock uint64) ([]Deposit, error) {
+	const q = `
+		SELECT id, tx_hash, log_index, block_number, block_hash
+		FROM deposits
+		WHERE status = 'pending' AND block_number <= $1
+		ORDER BY block_number, log_index`
+
+	rows, err := l.pool.Query(ctx, q, maxBlock)
+	if err != nil {
+		return nil, fmt.Errorf("pending deposits up to %d: %w", maxBlock, err)
+	}
+	defer rows.Close()
+
+	var deps []Deposit
+	for rows.Next() {
+		var d Deposit
+		if err := rows.Scan(&d.ID, &d.TxHash, &d.LogIndex, &d.BlockNumber, &d.BlockHash); err != nil {
+			return nil, fmt.Errorf("scan deposit: %w", err)
+		}
+		deps = append(deps, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("pending deposits up to %d: %w", maxBlock, err)
+	}
+	return deps, nil
+}
+
+// MarkConfirmed records that deposit id has enough confirmations. It moves
+// only a pending row whose block hash is still blockHash, else it returns
+// ErrNotPending: a block that was replaced must never confirm a deposit.
+func (l *Ledger) MarkConfirmed(ctx context.Context, id int64, blockHash string) error {
+	const q = `
+		UPDATE deposits SET status = 'confirmed', updated_at = now()
+		WHERE id = $1 AND status = 'pending' AND block_hash = $2`
+
+	tag, err := l.pool.Exec(ctx, q, id, blockHash)
+	if err != nil {
+		return fmt.Errorf("mark deposit %d confirmed: %w", id, err)
+	}
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("mark deposit %d confirmed: %w", id, ErrNotPending)
+	}
+	return nil
 }
 
 // Cursor returns the last block the watcher called name has fully

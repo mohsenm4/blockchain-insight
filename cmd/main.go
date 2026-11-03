@@ -6,11 +6,14 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
+	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/mohsenm4/blockchain-insight/config"
 	"github.com/mohsenm4/blockchain-insight/internal/api"
+	"github.com/mohsenm4/blockchain-insight/internal/confirm"
 	"github.com/mohsenm4/blockchain-insight/internal/ledger"
 	"github.com/mohsenm4/blockchain-insight/internal/logging"
 )
@@ -48,12 +51,26 @@ func main() {
 	}
 	slog.Info("db connected")
 
-	server := api.NewServer(cfg, ledger.New(pool))
+	lg := ledger.New(pool)
+	server := api.NewServer(cfg, lg)
 
 	if err := server.StartWatcher(ctx); err != nil {
 		slog.Error("start watcher", "err", err)
 		os.Exit(1)
 	}
+
+	client, err := ethclient.DialContext(ctx, cfg.RPCURL)
+	if err != nil {
+		slog.Error("dial rpc for confirmations", "err", err)
+		os.Exit(1)
+	}
+	defer client.Close()
+	slog.Info("confirmation tracker starting", "confirmations", cfg.Confirmations)
+	go func() {
+		if err := confirm.Run(ctx, confirm.NewEthChain(client), lg, cfg.Confirmations, 10*time.Second); err != nil {
+			slog.Info("confirmation tracker stopped", "err", err)
+		}
+	}()
 
 	// TODO: Make the server port configurable via environment variable or config file
 	port := ":5050"
