@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"math/big"
 	"net/http"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -154,13 +155,17 @@ func (s *Server) settleSigned(c *gin.Context, id int64, tx *types.Transaction) {
 // is out, and a 500 could make the client retry with a new key and pay
 // twice.
 func (s *Server) markBroadcast(ctx context.Context, id int64, tx *types.Transaction) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 	if err := s.ledger.MarkBroadcast(ctx, id, tx.Hash().Hex()); err != nil {
 		slog.Error("mark broadcast", "withdrawal", id, "tx", tx.Hash().Hex(), "err", err)
 	}
 }
 
 func (s *Server) markFailed(ctx context.Context, id int64) {
-	if err := s.ledger.MarkFailed(context.WithoutCancel(ctx), id); err != nil {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	if err := s.ledger.MarkFailed(ctx, id); err != nil {
 		slog.Error("mark failed", "withdrawal", id, "err", err)
 	}
 }
