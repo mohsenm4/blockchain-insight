@@ -54,6 +54,10 @@ var ErrNotSigned = errors.New("withdrawal not signed")
 // is now in a block with a different hash.
 var ErrNotPending = errors.New("deposit not pending")
 
+// ErrNotConfirmed means the deposit is missing or has already left 'confirmed'
+// (for example, it was already credited).
+var ErrNotConfirmed = errors.New("deposit not confirmed")
+
 // uniqueViolation is the Postgres error code for a UNIQUE/PK conflict.
 const uniqueViolation = "23505"
 
@@ -190,6 +194,36 @@ func (l *Ledger) PendingDeposits(ctx context.Context, maxBlock uint64) ([]Deposi
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("pending deposits up to %d: %w", maxBlock, err)
+	}
+	return deps, nil
+}
+
+// ConfirmedDeposits returns the deposits that are confirmed but not credited
+// yet, oldest first. Only ID, TxHash, LogIndex, BlockNumber and BlockHash are
+// set.
+func (l *Ledger) ConfirmedDeposits(ctx context.Context) ([]Deposit, error) {
+	const q = `
+		SELECT id, tx_hash, log_index, block_number, block_hash
+		FROM deposits
+		WHERE status = 'confirmed'
+		ORDER BY block_number, log_index`
+
+	rows, err := l.pool.Query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("confirmed deposits: %w", err)
+	}
+	defer rows.Close()
+
+	var deps []Deposit
+	for rows.Next() {
+		var d Deposit
+		if err := rows.Scan(&d.ID, &d.TxHash, &d.LogIndex, &d.BlockNumber, &d.BlockHash); err != nil {
+			return nil, fmt.Errorf("scan deposit: %w", err)
+		}
+		deps = append(deps, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("confirmed deposits: %w", err)
 	}
 	return deps, nil
 }
@@ -355,6 +389,41 @@ func (l *Ledger) MarkFailed(ctx context.Context, id int64) error {
 	}
 	if tag.RowsAffected() != 1 {
 		return fmt.Errorf("mark withdrawal %d failed: %w", id, ErrNotQueued)
+	}
+	return nil
+}
+
+func (l *Ledger) MarkCredited(ctx context.Context, id int64, head uint64) error {
+	tx, err := l.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() // no-op after Commit
+
+	const credit = `
+		UPDATE deposits
+		SET status = 'credited', credited_at_block = $2, updated_at = now()
+		WHERE id = $1 AND status = 'confirmed'`
+
+	tag, err := tx.Exec(ctx, credit, id, head)
+	if err != nil {
+		return fmt.Errorf("credit deposit %d: %w", id, err)
+	}
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("credit deposit %d: %w", id, ErrNotConfirmed)
+	}
+
+	const addBalance = `
+		INSERT INTO balances (user_id, token, amount)
+		SELECT user_id, token, amount FROM deposits WHERE id = $1
+		ON CONFLICT (user_id, token) DO UPDATE
+		SET amount = balances.amount + EXCLUDED.amount, updated_at = now()`
+
+	if _, err := tx.Exec(ctx, addBalance, id); err != nil {
+		return fmt.Errorf("add deposit %d to balance: %w", id, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit: %w", err)
 	}
 	return nil
 }

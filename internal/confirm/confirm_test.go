@@ -50,6 +50,27 @@ func (f *fakeStore) MarkConfirmed(ctx context.Context, id int64, blockHash strin
 	return ledger.ErrNotPending
 }
 
+func (f *fakeStore) ConfirmedDeposits(ctx context.Context) ([]ledger.Deposit, error) {
+	var out []ledger.Deposit
+	for _, d := range f.deps {
+		if d.Status == "confirmed" {
+			out = append(out, d)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeStore) MarkCredited(ctx context.Context, id int64, head uint64) error {
+	for i := range f.deps {
+		d := &f.deps[i]
+		if d.ID == id && d.Status == "confirmed" {
+			d.Status = "credited"
+			return nil
+		}
+	}
+	return ledger.ErrNotConfirmed
+}
+
 var (
 	hashA = common.HexToHash("0xa")
 	hashB = common.HexToHash("0xb")
@@ -111,5 +132,28 @@ func TestStepYoungChain(t *testing.T) {
 	n, err := Step(context.Background(), chain, store, 12)
 	if err != nil || n != 0 {
 		t.Fatalf("confirmed = %d, err = %v; want 0, nil", n, err)
+	}
+}
+
+// A deposit left confirmed (for example by a crash after MarkConfirmed) is
+// credited by the next Step; one confirmed in this Step waits for the next.
+func TestStepCreditsConfirmed(t *testing.T) {
+	chain := &fakeChain{head: 2000, hashes: map[uint64]common.Hash{1000: hashA}, asked: map[uint64]int{}}
+	left := pending(1, 900, hashA)
+	left.Status = "confirmed"
+	store := &fakeStore{deps: []ledger.Deposit{left, pending(2, 1000, hashA)}}
+
+	if _, err := Step(context.Background(), chain, store, 12); err != nil {
+		t.Fatal(err)
+	}
+	if store.deps[0].Status != "credited" || store.deps[1].Status != "confirmed" {
+		t.Fatalf("after step 1: %s, %s; want credited, confirmed", store.deps[0].Status, store.deps[1].Status)
+	}
+
+	if _, err := Step(context.Background(), chain, store, 12); err != nil {
+		t.Fatal(err)
+	}
+	if store.deps[1].Status != "credited" {
+		t.Fatalf("after step 2: %s; want credited", store.deps[1].Status)
 	}
 }

@@ -24,6 +24,8 @@ type Chain interface {
 type Store interface {
 	PendingDeposits(ctx context.Context, maxBlock uint64) ([]ledger.Deposit, error)
 	MarkConfirmed(ctx context.Context, id int64, blockHash string) error
+	ConfirmedDeposits(ctx context.Context) ([]ledger.Deposit, error)
+	MarkCredited(ctx context.Context, id int64, head uint64) error
 }
 
 // Run calls Step every interval until ctx is cancelled. It returns
@@ -45,13 +47,20 @@ func Run(ctx context.Context, chain Chain, store Store, confirmations uint64, in
 	}
 }
 
-// Step confirms every pending deposit with at least confirmations blocks on
-// top of it (head − block_number >= confirmations) whose block is still on
-// the chain with the same hash. A deposit whose block hash changed stays
-// pending: the block was replaced (reorg).
+// Step first credits every confirmed deposit, then confirms every pending
+// deposit with at least confirmations blocks on top of it
+// (head − block_number >= confirmations) whose block is still on the chain
+// with the same hash. A deposit whose block hash changed stays pending: the
+// block was replaced (reorg).
+//
+// Crediting first means a deposit confirmed now is credited on the next
+// Step, and one left confirmed by a crash is never stuck.
 func Step(ctx context.Context, chain Chain, store Store, confirmations uint64) (confirmed int, err error) {
 	head, err := chain.BlockNumber(ctx)
 	if err != nil {
+		return 0, err
+	}
+	if err := credit(ctx, store, head); err != nil {
 		return 0, err
 	}
 	if head < confirmations {
@@ -85,6 +94,22 @@ func Step(ctx context.Context, chain Chain, store Store, confirmations uint64) (
 		slog.Info("deposit confirmed", "deposit", d.ID, "tx", d.TxHash, "block", d.BlockNumber)
 	}
 	return confirmed, nil
+}
+
+// credit adds every confirmed deposit to its user's balance. head is saved
+// as credited_at_block.
+func credit(ctx context.Context, store Store, head uint64) error {
+	deps, err := store.ConfirmedDeposits(ctx)
+	if err != nil {
+		return err
+	}
+	for _, d := range deps {
+		if err := store.MarkCredited(ctx, d.ID, head); err != nil {
+			return err
+		}
+		slog.Info("deposit credited", "deposit", d.ID, "tx", d.TxHash, "block", d.BlockNumber)
+	}
+	return nil
 }
 
 // EthChain adapts an ethclient.Client to Chain.

@@ -350,3 +350,65 @@ func TestMarkConfirmed(t *testing.T) {
 		t.Fatal("confirmed deposit still returned as pending")
 	}
 }
+
+func TestMarkCreditedOnce(t *testing.T) {
+	ctx := context.Background()
+	pool := testPool(t)
+
+	l := New(pool)
+	d := Deposit{
+		UserID: 999001, Address: "0xabc", TxHash: "0xtest-mark-credited", LogIndex: 0,
+		Token: "TESTCREDIT", Amount: big.NewInt(250), BlockNumber: 100, BlockHash: "0xblock",
+	}
+	cleanup := func() {
+		if _, err := pool.Exec(ctx, `DELETE FROM deposits WHERE tx_hash = $1`, d.TxHash); err != nil {
+			t.Errorf("cleanup deposits: %v", err)
+		}
+		if _, err := pool.Exec(ctx, `DELETE FROM balances WHERE user_id = $1`, d.UserID); err != nil {
+			t.Errorf("cleanup balances: %v", err)
+		}
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+
+	if _, err := l.InsertDeposit(ctx, d); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	var id int64
+	if err := pool.QueryRow(ctx, `SELECT id FROM deposits WHERE tx_hash = $1`, d.TxHash).Scan(&id); err != nil {
+		t.Fatalf("find id: %v", err)
+	}
+
+	if err := l.MarkCredited(ctx, id, 112); !errors.Is(err, ErrNotConfirmed) {
+		t.Fatalf("credit pending: err = %v, want ErrNotConfirmed", err)
+	}
+	if err := l.MarkConfirmed(ctx, id, d.BlockHash); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+	if err := l.MarkCredited(ctx, id, 112); err != nil {
+		t.Fatalf("credit: %v", err)
+	}
+	if err := l.MarkCredited(ctx, id, 113); !errors.Is(err, ErrNotConfirmed) {
+		t.Fatalf("2nd credit: err = %v, want ErrNotConfirmed", err)
+	}
+
+	var balance string
+	if err := pool.QueryRow(ctx,
+		`SELECT amount::text FROM balances WHERE user_id = $1 AND token = $2`,
+		d.UserID, d.Token).Scan(&balance); err != nil {
+		t.Fatalf("read balance: %v", err)
+	}
+	if balance != "250" {
+		t.Fatalf("balance = %s, want 250 (credited once)", balance)
+	}
+
+	var status string
+	var atBlock uint64
+	if err := pool.QueryRow(ctx,
+		`SELECT status, credited_at_block FROM deposits WHERE id = $1`, id).Scan(&status, &atBlock); err != nil {
+		t.Fatalf("read deposit: %v", err)
+	}
+	if status != "credited" || atBlock != 112 {
+		t.Fatalf("deposit = %s at %d, want credited at 112", status, atBlock)
+	}
+}
