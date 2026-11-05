@@ -76,7 +76,9 @@ type dbtx interface {
 }
 
 // InsertDeposit stores d. It returns inserted=false when a row with the
-// same (tx_hash, log_index) already exists.
+// same (tx_hash, log_index) already exists and is not reverted. A reverted
+// row is used again, as pending: after a reorg the transfer is back on the
+// chain, maybe at a log index another transfer of the same tx had before.
 func (l *Ledger) InsertDeposit(ctx context.Context, d Deposit) (inserted bool, err error) {
 	return insertDeposit(ctx, l.pool, d)
 }
@@ -85,7 +87,11 @@ func insertDeposit(ctx context.Context, db dbtx, d Deposit) (inserted bool, err 
 	const q = `
 		INSERT INTO deposits (user_id, address, tx_hash, log_index, token, amount, block_number, block_hash)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-		ON CONFLICT (tx_hash, log_index) DO NOTHING`
+		ON CONFLICT (tx_hash, log_index) DO UPDATE
+		SET user_id = EXCLUDED.user_id, address = EXCLUDED.address, token = EXCLUDED.token,
+		    amount = EXCLUDED.amount, block_number = EXCLUDED.block_number,
+		    block_hash = EXCLUDED.block_hash, status = 'pending', updated_at = now()
+		WHERE deposits.status = 'reverted'`
 
 	tag, err := db.Exec(ctx, q,
 		d.UserID, d.Address, d.TxHash, d.LogIndex, d.Token, d.Amount, d.BlockNumber, d.BlockHash)
@@ -93,7 +99,7 @@ func insertDeposit(ctx context.Context, db dbtx, d Deposit) (inserted bool, err 
 		return false, fmt.Errorf("insert deposit %s:%d: %w", d.TxHash, d.LogIndex, err)
 	}
 
-	// DO NOTHING on conflict means 0 rows affected.
+	// A conflict with a row that is not reverted changes nothing: 0 rows affected.
 	return tag.RowsAffected() == 1, nil
 }
 
@@ -170,10 +176,12 @@ func (l *Ledger) DepositsByAddress(ctx context.Context, addr common.Address) ([]
 }
 
 // PendingDeposits returns the pending deposits in blocks up to maxBlock,
-// oldest first. Only ID, TxHash, LogIndex, BlockNumber and BlockHash are set.
+// oldest first. Every field except Status is set: after a reorg the tracker
+// needs the transfer itself to find it again.
 func (l *Ledger) PendingDeposits(ctx context.Context, maxBlock uint64) ([]Deposit, error) {
+	// amount as text: see DepositsByAddress.
 	const q = `
-		SELECT id, tx_hash, log_index, block_number, block_hash
+		SELECT id, user_id, address, tx_hash, log_index, token, amount::text, block_number, block_hash
 		FROM deposits
 		WHERE status = 'pending' AND block_number <= $1
 		ORDER BY block_number, log_index`
@@ -187,8 +195,14 @@ func (l *Ledger) PendingDeposits(ctx context.Context, maxBlock uint64) ([]Deposi
 	var deps []Deposit
 	for rows.Next() {
 		var d Deposit
-		if err := rows.Scan(&d.ID, &d.TxHash, &d.LogIndex, &d.BlockNumber, &d.BlockHash); err != nil {
+		var amount string
+		if err := rows.Scan(&d.ID, &d.UserID, &d.Address, &d.TxHash, &d.LogIndex, &d.Token,
+			&amount, &d.BlockNumber, &d.BlockHash); err != nil {
 			return nil, fmt.Errorf("scan deposit: %w", err)
+		}
+		var ok bool
+		if d.Amount, ok = new(big.Int).SetString(amount, 10); !ok {
+			return nil, fmt.Errorf("deposit %d: bad amount %q", d.ID, amount)
 		}
 		deps = append(deps, d)
 	}
@@ -242,6 +256,44 @@ func (l *Ledger) MarkConfirmed(ctx context.Context, id int64, blockHash string) 
 	}
 	if tag.RowsAffected() != 1 {
 		return fmt.Errorf("mark deposit %d confirmed: %w", id, ErrNotPending)
+	}
+	return nil
+}
+
+// RevertDeposits handles a reorg: block blockHash, which held tx txHash,
+// was replaced. In one transaction it reverts the pending deposits of
+// txHash in that block and records moved: the same transfers in the block
+// the tx is in now (none when the tx is in no block or failed there). It
+// returns ErrNotPending when nothing was reverted, for example because
+// another worker did it first.
+func (l *Ledger) RevertDeposits(ctx context.Context, txHash, blockHash string, moved []Deposit) error {
+	tx, err := l.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() // no-op after Commit
+
+	const revert = `
+		UPDATE deposits SET status = 'reverted', updated_at = now()
+		WHERE tx_hash = $1 AND block_hash = $2 AND status = 'pending'`
+
+	tag, err := tx.Exec(ctx, revert, txHash, blockHash)
+	if err != nil {
+		return fmt.Errorf("revert deposits of %s: %w", txHash, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("revert deposits of %s: %w", txHash, ErrNotPending)
+	}
+
+	// Revert first: a moved transfer may get a log index this tx had in
+	// the old block, and insertDeposit uses a reverted row again.
+	for _, d := range moved {
+		if _, err := insertDeposit(ctx, tx, d); err != nil {
+			return err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit: %w", err)
 	}
 	return nil
 }

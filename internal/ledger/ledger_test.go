@@ -336,6 +336,9 @@ func TestMarkConfirmed(t *testing.T) {
 	if !ok {
 		t.Fatal("pending deposit not returned for maxBlock 100")
 	}
+	if p.UserID != d.UserID || p.Address != d.Address || p.Token != d.Token || p.Amount.Cmp(d.Amount) != 0 {
+		t.Fatalf("pending deposit = %+v, want the fields of %+v", p, d)
+	}
 
 	if err := l.MarkConfirmed(ctx, p.ID, "0xother"); !errors.Is(err, ErrNotPending) {
 		t.Fatalf("wrong hash: err = %v, want ErrNotPending", err)
@@ -410,5 +413,137 @@ func TestMarkCreditedOnce(t *testing.T) {
 	}
 	if status != "credited" || atBlock != 112 {
 		t.Fatalf("deposit = %s at %d, want credited at 112", status, atBlock)
+	}
+}
+
+// depositRow is what the reorg tests read back.
+type depositRow struct {
+	logIndex uint
+	status   string
+	block    uint64
+	hash     string
+	amount   string
+}
+
+func depositRows(t *testing.T, pool *pgxpool.Pool, txHash string) []depositRow {
+	t.Helper()
+	rows, err := pool.Query(context.Background(), `
+		SELECT log_index, status, block_number, block_hash, amount::text
+		FROM deposits WHERE tx_hash = $1 ORDER BY log_index`, txHash)
+	if err != nil {
+		t.Fatalf("read deposits: %v", err)
+	}
+	defer rows.Close()
+
+	var out []depositRow
+	for rows.Next() {
+		var r depositRow
+		if err := rows.Scan(&r.logIndex, &r.status, &r.block, &r.hash, &r.amount); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read deposits: %v", err)
+	}
+	return out
+}
+
+// Two transfers of one tx were in a replaced block at log indexes 3 and 4.
+// In the new block they are at 4 and 5, so the first one takes the old row
+// of the second.
+func TestRevertDeposits(t *testing.T) {
+	ctx := context.Background()
+	pool := testPool(t)
+
+	l := New(pool)
+	const tx = "0xtest-revert-deposits"
+	deleteRows := func() {
+		if _, err := pool.Exec(ctx, `DELETE FROM deposits WHERE tx_hash = $1`, tx); err != nil {
+			t.Errorf("cleanup: %v", err)
+		}
+	}
+	deleteRows()
+	t.Cleanup(deleteRows)
+
+	first := Deposit{UserID: 1, Address: "0xabc", TxHash: tx, LogIndex: 3, Token: "USDC",
+		Amount: big.NewInt(10), BlockNumber: 100, BlockHash: "0xold"}
+	second := first
+	second.LogIndex, second.Amount = 4, big.NewInt(20)
+	for _, d := range []Deposit{first, second} {
+		if _, err := l.InsertDeposit(ctx, d); err != nil {
+			t.Fatalf("insert: %v", err)
+		}
+	}
+
+	moved := []Deposit{first, second}
+	for i := range moved {
+		moved[i].LogIndex++
+		moved[i].BlockNumber, moved[i].BlockHash = 101, "0xnew"
+	}
+	if err := l.RevertDeposits(ctx, tx, "0xold", moved); err != nil {
+		t.Fatalf("revert: %v", err)
+	}
+
+	want := []depositRow{
+		{3, "reverted", 100, "0xold", "10"},
+		{4, "pending", 101, "0xnew", "10"},
+		{5, "pending", 101, "0xnew", "20"},
+	}
+	got := depositRows(t, pool, tx)
+	if len(got) != len(want) {
+		t.Fatalf("rows = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("rows = %+v, want %+v", got, want)
+		}
+	}
+
+	if err := l.RevertDeposits(ctx, tx, "0xold", moved); !errors.Is(err, ErrNotPending) {
+		t.Fatalf("2nd revert: err = %v, want ErrNotPending", err)
+	}
+
+	// The watcher sees the new block later: no second row.
+	if inserted, err := l.InsertDeposit(ctx, moved[1]); err != nil || inserted {
+		t.Fatalf("watcher insert: inserted = %v, err = %v; want false, nil", inserted, err)
+	}
+}
+
+// The tx was in no block when its deposit was reverted. When the watcher
+// sees it again at the same log index, the reverted row is pending again.
+func TestRevertedDepositComesBack(t *testing.T) {
+	ctx := context.Background()
+	pool := testPool(t)
+
+	l := New(pool)
+	d := Deposit{UserID: 1, Address: "0xabc", TxHash: "0xtest-comes-back", LogIndex: 0, Token: "USDC",
+		Amount: big.NewInt(10), BlockNumber: 100, BlockHash: "0xold"}
+	deleteRow := func() {
+		if _, err := pool.Exec(ctx, `DELETE FROM deposits WHERE tx_hash = $1`, d.TxHash); err != nil {
+			t.Errorf("cleanup: %v", err)
+		}
+	}
+	deleteRow()
+	t.Cleanup(deleteRow)
+
+	if _, err := l.InsertDeposit(ctx, d); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	if err := l.RevertDeposits(ctx, d.TxHash, d.BlockHash, nil); err != nil {
+		t.Fatalf("revert: %v", err)
+	}
+	if got := depositRows(t, pool, d.TxHash); len(got) != 1 || got[0].status != "reverted" {
+		t.Fatalf("after revert = %+v, want one reverted row", got)
+	}
+
+	d.BlockNumber, d.BlockHash = 105, "0xnew"
+	inserted, err := l.InsertDeposit(ctx, d)
+	if err != nil || !inserted {
+		t.Fatalf("insert again: inserted = %v, err = %v; want true, nil", inserted, err)
+	}
+	want := depositRow{0, "pending", 105, "0xnew", "10"}
+	if got := depositRows(t, pool, d.TxHash); len(got) != 1 || got[0] != want {
+		t.Fatalf("after insert again = %+v, want [%+v]", got, want)
 	}
 }
