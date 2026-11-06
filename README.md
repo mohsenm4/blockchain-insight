@@ -27,6 +27,7 @@ This is a personal project used to practice production-grade Go. It started as a
    - the tx is in another block → the deposit moves there and counts its confirmations again;
    - the tx is in no block, or it failed → the deposit becomes `reverted`. If the tx comes back later, the watcher records it again and the `reverted` row is `pending` again.
 4. **Credit** — `confirmed` → `credited`, and the amount is added to `balances`, in one DB transaction. The status change is `UPDATE … WHERE status = 'confirmed'`, so a deposit is credited once, even with two workers.
+5. **Reversal** — a block can still be replaced until it is final (`FINALITY` blocks, default 64). Every 10 s, the credited deposits in that window are checked again. If the block hash changed and the transfer is not on the chain any more (the tx is in no block, failed, or the transfer is not in its new block), the credited row is **not edited**: a `deposit_reversals` row is added and the amount is taken back from `balances`, in one DB transaction, once per deposit. If the user has already spent it (balance too low), nothing is taken, the reversal is saved as `needs_review`, and an error is logged for a person to handle. If the transfer *is* in the new block, nothing changes, and the watcher does not record that copy again (it would be credited twice).
 
 ## Withdrawals
 
@@ -52,7 +53,7 @@ CI runs `go vet`, golangci-lint, and the tests with the race detector. The ledge
 | GET    | `/block/:id`                | Block by number.                                                            |
 | GET    | `/balance/:address`         | ETH balance of an address in wei.                                           |
 | POST   | `/watch`                    | Assign a deposit address to a user: `{"address", "user_id"}`. 409 if taken. |
-| GET    | `/watch/:address/transfers` | Deposits recorded for an address, from Postgres.                            |
+| GET    | `/watch/:address/transfers` | Deposits recorded for an address, from Postgres. A reversed one shows `reversed` or `needs_review`. |
 | POST   | `/send`                     | Send tokens: `{"user_id", "idempotency_key", "to", "amount"}`. Same key never signs a second tx (it may resend the first one if its state is unknown); 409 while in progress, 422 if reused for a different request or if the balance is too low. |
 | GET    | `/tx/:hash`                 | Status of a sent transaction.                                               |
 | GET    | `/swagger/*`                | Swagger UI for the API (only with the `swagger` build tag).                 |
@@ -81,6 +82,7 @@ cp app.env.example app.env
 | `TOKEN_ADDRESS`   | for `/send`| The ERC20 contract that `/send` transfers                                        |
 | `ARCHIVE_RPC_URL` | no         | Archive node, asked only when `RPC_URL` fails (for example, pruned old blocks)   |
 | `CONFIRMATIONS`   | no         | Blocks on top of a deposit before it is confirmed (default 12)                   |
+| `FINALITY`        | no         | Blocks after which a credited deposit is no longer checked for a reorg (default 64) |
 
 Two settings are read only from the environment, not from `app.env`:
 
@@ -153,7 +155,7 @@ The ledger runs on Postgres 16 from `docker-compose.yml`. Data lives in the name
 
 The host port is **5433**, not 5432, so it does not clash with a local Postgres install.
 
-Tables: `deposits`, `deposit_addresses`, `watcher_cursor`, `withdrawals`, `balances`. The design, the state machines and the reasons are in [docs/ledger-schema.md](docs/ledger-schema.md).
+Tables: `deposits`, `deposit_addresses`, `watcher_cursor`, `withdrawals`, `balances`, `deposit_reversals`. The design, the state machines and the reasons are in [docs/ledger-schema.md](docs/ledger-schema.md).
 
 Migrations live in `migrations/` and run with [goose](https://github.com/pressly/goose):
 
@@ -185,7 +187,7 @@ cmd/tools/           small CLIs from building the pipeline (filter: print Transf
 config/              viper-based config loader
 internal/api/        HTTP server, handlers, cache middleware, watcher start
 internal/watch/      polls ERC20 Transfer logs, falls back to an archive node
-internal/confirm/    deposit confirmations, reorgs, crediting; withdrawal settling
+internal/confirm/    deposit confirmations, reorgs, crediting, reversals; withdrawal settling
 internal/ledger/     Postgres: deposits, cursor, withdrawals, balances
 internal/sender/     signs and broadcasts ERC20 transfers
 internal/nonce/      nonce manager for the hot wallet
@@ -212,7 +214,6 @@ migrations/          goose SQL migrations
 ## Roadmap
 
 - Withdrawals: detect a dropped tx (never mined, and its nonce taken by another tx). Now it stays `broadcast`.
-- A reorg after `credited`: a reversal row, never an edit of the credited row
 - Redis: a lock for the withdrawal worker, rate limiting, and a "Redis is down" test
 - An own Sepolia node (snap sync) with Prometheus and Grafana; this service uses it, with a fallback
 - The watched token (Sepolia USDC) from config instead of code

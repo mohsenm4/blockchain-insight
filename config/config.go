@@ -15,6 +15,7 @@ type Config struct {
 	PrivateKey    string `mapstructure:"private_key"`
 	DatabaseURL   string `mapstructure:"database_url"`
 	Confirmations uint64 `mapstructure:"confirmations"`
+	Finality      uint64 `mapstructure:"finality"`
 }
 
 var ErrMissingRPCURL = errors.New("RPC_URL must be set (via app.env or environment)")
@@ -28,6 +29,7 @@ func LoadConfig(path string) (config Config, err error) {
 
 	viper.AutomaticEnv()
 	viper.SetDefault("confirmations", 12) // Sepolia; also lets CONFIRMATIONS come from env only
+	viper.SetDefault("finality", 64)      // two epochs: a block this deep is final
 
 	if err = viper.ReadInConfig(); err != nil {
 		return

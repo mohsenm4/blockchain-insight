@@ -764,3 +764,212 @@ func TestSettleBroadcastWithdrawal(t *testing.T) {
 		t.Fatalf("after fail: balance = %s, want 2000 (given back once)", got)
 	}
 }
+
+// A reversal takes the amount back once and never edits the credited row;
+// with too little balance it takes nothing and needs review.
+func TestReverseDeposit(t *testing.T) {
+	ctx := context.Background()
+	pool := testPool(t)
+
+	l := New(pool)
+	const user = 999007
+	cleanupWithdrawals(t, pool, user)
+	clean := func() {
+		for _, q := range []string{
+			`DELETE FROM deposit_reversals WHERE user_id = $1`,
+			`DELETE FROM deposits WHERE user_id = $1`,
+		} {
+			if _, err := pool.Exec(ctx, q, user); err != nil {
+				t.Errorf("cleanup: %v", err)
+			}
+		}
+	}
+	clean()
+	t.Cleanup(clean) // registered last, so it runs before the balances cleanup
+
+	credit := func(txHash string, amount int64) int64 {
+		t.Helper()
+		d := Deposit{UserID: user, Address: "0xabc", TxHash: txHash, Token: testToken,
+			Amount: big.NewInt(amount), BlockNumber: 5000, BlockHash: "0xold"}
+		if _, err := l.InsertDeposit(ctx, d); err != nil {
+			t.Fatalf("insert %s: %v", txHash, err)
+		}
+		var id int64
+		if err := pool.QueryRow(ctx, `SELECT id FROM deposits WHERE tx_hash = $1`, txHash).Scan(&id); err != nil {
+			t.Fatalf("id of %s: %v", txHash, err)
+		}
+		if err := l.MarkConfirmed(ctx, id, "0xold"); err != nil {
+			t.Fatalf("confirm %s: %v", txHash, err)
+		}
+		if err := l.MarkCredited(ctx, id, 5012); err != nil {
+			t.Fatalf("credit %s: %v", txHash, err)
+		}
+		return id
+	}
+	a := credit("0xtest-reverse-a", 1000)
+	b := credit("0xtest-reverse-b", 500)
+	if got := balanceOf(t, pool, user); got != "1500" {
+		t.Fatalf("after credit: balance = %s, want 1500", got)
+	}
+
+	deps, err := l.CreditedDeposits(ctx, 5000)
+	if err != nil {
+		t.Fatalf("credited deposits: %v", err)
+	}
+	var mine int
+	for _, d := range deps {
+		if d.UserID == user {
+			mine++
+		}
+	}
+	if mine != 2 {
+		t.Fatalf("credited deposits: %d of ours, want 2", mine)
+	}
+
+	if _, err := l.ReverseDeposit(ctx, a, "0xnew", "test"); !errors.Is(err, ErrNotCredited) {
+		t.Fatalf("wrong block hash: err = %v, want ErrNotCredited", err)
+	}
+	if status, err := l.ReverseDeposit(ctx, a, "0xold", "test"); err != nil || status != "reversed" {
+		t.Fatalf("reverse a: status = %q, err = %v; want reversed", status, err)
+	}
+	if _, err := l.ReverseDeposit(ctx, a, "0xold", "test"); !errors.Is(err, ErrNotCredited) {
+		t.Fatalf("2nd reverse a: err = %v, want ErrNotCredited", err)
+	}
+	if got := balanceOf(t, pool, user); got != "500" {
+		t.Fatalf("after reverse a: balance = %s, want 500 (taken once)", got)
+	}
+
+	// The user spends it, then b's block goes away.
+	if _, err := pool.Exec(ctx, `UPDATE balances SET amount = 100 WHERE user_id = $1`, user); err != nil {
+		t.Fatalf("spend: %v", err)
+	}
+	if status, err := l.ReverseDeposit(ctx, b, "0xold", "test"); err != nil || status != "needs_review" {
+		t.Fatalf("reverse b: status = %q, err = %v; want needs_review", status, err)
+	}
+	if got := balanceOf(t, pool, user); got != "100" {
+		t.Fatalf("after reverse b: balance = %s, want 100 (nothing taken)", got)
+	}
+
+	var status string
+	if err := pool.QueryRow(ctx, `SELECT status FROM deposits WHERE id = $1`, a).Scan(&status); err != nil || status != "credited" {
+		t.Fatalf("deposit a: status = %q, err = %v; want credited (never edited)", status, err)
+	}
+	if deps, err = l.CreditedDeposits(ctx, 5000); err != nil {
+		t.Fatalf("credited deposits: %v", err)
+	}
+	for _, d := range deps {
+		if d.UserID == user {
+			t.Fatalf("deposit %d still listed after its reversal", d.ID)
+		}
+	}
+}
+
+// cleanupDeposits deletes the deposits, reversals and balances of a test
+// user, now and after the test.
+func cleanupDeposits(t *testing.T, pool *pgxpool.Pool, userID int64) {
+	t.Helper()
+	clean := func() {
+		for _, q := range []string{
+			`DELETE FROM deposit_reversals WHERE user_id = $1`,
+			`DELETE FROM deposits WHERE user_id = $1`,
+			`DELETE FROM balances WHERE user_id = $1`,
+		} {
+			if _, err := pool.Exec(context.Background(), q, userID); err != nil {
+				t.Errorf("cleanup: %v", err)
+			}
+		}
+	}
+	clean()
+	t.Cleanup(clean)
+}
+
+// creditDeposit inserts d, confirms it and credits it, and returns its id.
+func creditDeposit(t *testing.T, l *Ledger, pool *pgxpool.Pool, d Deposit) int64 {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := l.InsertDeposit(ctx, d); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+	var id int64
+	if err := pool.QueryRow(ctx, `SELECT id FROM deposits WHERE tx_hash = $1 AND log_index = $2`,
+		d.TxHash, d.LogIndex).Scan(&id); err != nil {
+		t.Fatalf("find id: %v", err)
+	}
+	if err := l.MarkConfirmed(ctx, id, d.BlockHash); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+	if err := l.MarkCredited(ctx, id, d.BlockNumber+12); err != nil {
+		t.Fatalf("credit: %v", err)
+	}
+	return id
+}
+
+// A credited deposit's tx moved to a new block, where its transfer has
+// another log index. The watcher sees that block later: the copy must not
+// be recorded (it would be credited twice), until the deposit is reversed.
+func TestInsertDepositSkipsMovedCreditedTransfer(t *testing.T) {
+	ctx := context.Background()
+	pool := testPool(t)
+
+	l := New(pool)
+	const user = 999008
+	cleanupDeposits(t, pool, user)
+
+	d := Deposit{UserID: user, Address: "0xabc", TxHash: "0xtest-moved-credited", LogIndex: 3, Token: testToken,
+		Amount: big.NewInt(1000), BlockNumber: 6000, BlockHash: "0xold"}
+	id := creditDeposit(t, l, pool, d)
+
+	moved := d
+	moved.LogIndex, moved.BlockNumber, moved.BlockHash = 7, 6001, "0xnew"
+	if inserted, err := l.InsertDeposit(ctx, moved); err != nil || inserted {
+		t.Fatalf("moved copy: inserted = %v, err = %v; want false, nil", inserted, err)
+	}
+
+	// Another transfer of the same tx (another amount) is not a copy.
+	other := moved
+	other.LogIndex, other.Amount = 8, big.NewInt(50)
+	if inserted, err := l.InsertDeposit(ctx, other); err != nil || !inserted {
+		t.Fatalf("other transfer: inserted = %v, err = %v; want true, nil", inserted, err)
+	}
+
+	// After the credit is reversed, the transfer can be recorded again.
+	if _, err := l.ReverseDeposit(ctx, id, "0xold", "test"); err != nil {
+		t.Fatalf("reverse: %v", err)
+	}
+	if inserted, err := l.InsertDeposit(ctx, moved); err != nil || !inserted {
+		t.Fatalf("after reversal: inserted = %v, err = %v; want true, nil", inserted, err)
+	}
+}
+
+// The API shows a reversed deposit with its reversal's status.
+func TestDepositsByAddressShowsReversal(t *testing.T) {
+	ctx := context.Background()
+	pool := testPool(t)
+
+	l := New(pool)
+	const user = 999009
+	cleanupDeposits(t, pool, user)
+
+	addr := common.HexToAddress("0x00000000000000000000000000000000009990")
+	d := Deposit{UserID: user, Address: AddressKey(addr), TxHash: "0xtest-by-address-reversed", Token: testToken,
+		Amount: big.NewInt(1000), BlockNumber: 7000, BlockHash: "0xold"}
+	id := creditDeposit(t, l, pool, d)
+
+	status := func() string {
+		t.Helper()
+		deps, err := l.DepositsByAddress(ctx, addr)
+		if err != nil || len(deps) != 1 {
+			t.Fatalf("deposits by address: %d rows, err = %v; want 1", len(deps), err)
+		}
+		return deps[0].Status
+	}
+	if got := status(); got != "credited" {
+		t.Fatalf("before reversal: status = %s, want credited", got)
+	}
+	if _, err := l.ReverseDeposit(ctx, id, "0xold", "test"); err != nil {
+		t.Fatalf("reverse: %v", err)
+	}
+	if got := status(); got != "reversed" {
+		t.Fatalf("after reversal: status = %s, want reversed", got)
+	}
+}

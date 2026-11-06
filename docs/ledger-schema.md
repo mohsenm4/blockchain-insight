@@ -128,6 +128,15 @@ If the broadcast transaction fails on-chain:
 
 **Balance**: the amount leaves `balances` when the row is created (`queued`), in the same transaction, with `UPDATE … WHERE amount >= x`. Two withdrawals at the same time can't both pass this check: the second waits for the row lock, then checks the new amount. Not enough balance → no row at all. Every move to `failed` gives the amount back, in the same transaction as the status change. A `broadcast` withdrawal is settled from its receipt once its block has `CONFIRMATIONS` blocks on top: status 1 → `confirmed`, status 0 → `failed`, and the amount goes back. A failed tx waits for the confirmations too: after a reorg it could land again and succeed.
 
+## deposit_reversals
+
+A `credited` deposit whose block is replaced before it is final (`FINALITY` blocks, default 64) and whose transfer is not on the chain any more. The credited row is **never edited**: this row undoes it, and the amount is taken back from `balances` in the same transaction. `UNIQUE (deposit_id)`: a deposit is reversed at most once.
+
+- `reversed` — the amount was taken back.
+- `needs_review` — the balance was too low (the user already spent it), so nothing was taken and a person has to handle it.
+
+If the transfer moved to a new block (its tx is still on the chain), nothing is reversed. The watcher then must not record it a second time at its new log index: a new transfer is skipped when its tx already has a `confirmed` or `credited`, not reversed, deposit of the same address, token and amount. All logs of a tx are in one block, so that copy can only be the same transfer after a reorg.
+
 ## Open questions
 
 * Exact confirmation threshold for crediting deposits.

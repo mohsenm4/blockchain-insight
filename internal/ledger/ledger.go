@@ -62,6 +62,10 @@ var ErrNotPending = errors.New("deposit not pending")
 // (for example, it was already credited).
 var ErrNotConfirmed = errors.New("deposit not confirmed")
 
+// ErrNotCredited means the deposit is missing, is not credited, is in a
+// block with a different hash, or was already reversed.
+var ErrNotCredited = errors.New("deposit not credited")
+
 // ErrInsufficientBalance means the user has less of the token than the
 // withdrawal amount.
 var ErrInsufficientBalance = errors.New("insufficient balance")
@@ -87,6 +91,11 @@ type dbtx interface {
 // same (tx_hash, log_index) already exists and is not reverted. A reverted
 // row is used again, as pending: after a reorg the transfer is back on the
 // chain, maybe at a log index another transfer of the same tx had before.
+//
+// It also skips d when its tx already has a confirmed or credited deposit,
+// not reversed, of the same address, token and amount at another log index.
+// All logs of a tx are in one block, so that can only be the same transfer
+// after a reorg moved its tx: recording it again would credit it twice.
 func (l *Ledger) InsertDeposit(ctx context.Context, d Deposit) (inserted bool, err error) {
 	return insertDeposit(ctx, l.pool, d)
 }
@@ -94,7 +103,12 @@ func (l *Ledger) InsertDeposit(ctx context.Context, d Deposit) (inserted bool, e
 func insertDeposit(ctx context.Context, db dbtx, d Deposit) (inserted bool, err error) {
 	const q = `
 		INSERT INTO deposits (user_id, address, tx_hash, log_index, token, amount, block_number, block_hash)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		SELECT $1::bigint, $2::text, $3::text, $4::integer, $5::text, $6::numeric, $7::bigint, $8::text
+		WHERE NOT EXISTS (
+			SELECT 1 FROM deposits c
+			WHERE c.tx_hash = $3 AND c.log_index <> $4 AND c.address = $2 AND c.token = $5 AND c.amount = $6
+			  AND c.status IN ('confirmed', 'credited')
+			  AND NOT EXISTS (SELECT 1 FROM deposit_reversals r WHERE r.deposit_id = c.id))
 		ON CONFLICT (tx_hash, log_index) DO UPDATE
 		SET user_id = EXCLUDED.user_id, address = EXCLUDED.address, token = EXCLUDED.token,
 		    amount = EXCLUDED.amount, block_number = EXCLUDED.block_number,
@@ -107,7 +121,8 @@ func insertDeposit(ctx context.Context, db dbtx, d Deposit) (inserted bool, err 
 		return false, fmt.Errorf("insert deposit %s:%d: %w", d.TxHash, d.LogIndex, err)
 	}
 
-	// A conflict with a row that is not reverted changes nothing: 0 rows affected.
+	// A conflict with a row that is not reverted, or a skipped copy, changes
+	// nothing: 0 rows affected.
 	return tag.RowsAffected() == 1, nil
 }
 
@@ -148,14 +163,16 @@ func (l *Ledger) UserByAddress(ctx context.Context, addr common.Address) (userID
 	return userID, true, nil
 }
 
-// DepositsByAddress returns the deposits to addr, oldest first.
+// DepositsByAddress returns the deposits to addr, oldest first. A reversed
+// deposit has its reversal's status ('reversed' or 'needs_review').
 func (l *Ledger) DepositsByAddress(ctx context.Context, addr common.Address) ([]Deposit, error) {
 	// amount as text: NUMERIC → *big.Int has no direct scan, and text is exact.
 	const q = `
-		SELECT user_id, address, tx_hash, log_index, token, amount::text, block_number, block_hash, status
-		FROM deposits
-		WHERE address = $1
-		ORDER BY block_number, log_index`
+		SELECT d.user_id, d.address, d.tx_hash, d.log_index, d.token, d.amount::text, d.block_number, d.block_hash,
+		       COALESCE((SELECT r.status FROM deposit_reversals r WHERE r.deposit_id = d.id), d.status)
+		FROM deposits d
+		WHERE d.address = $1
+		ORDER BY d.block_number, d.log_index`
 
 	rows, err := l.pool.Query(ctx, q, AddressKey(addr))
 	if err != nil {
@@ -606,4 +623,94 @@ func (l *Ledger) MarkCredited(ctx context.Context, id int64, head uint64) error 
 		return fmt.Errorf("commit: %w", err)
 	}
 	return nil
+}
+
+// CreditedDeposits returns the credited deposits in blocks from minBlock on
+// that are not reversed, oldest first. Every field is set.
+func (l *Ledger) CreditedDeposits(ctx context.Context, minBlock uint64) ([]Deposit, error) {
+	// amount as text: see DepositsByAddress.
+	const q = `
+		SELECT d.id, d.user_id, d.address, d.tx_hash, d.log_index, d.token, d.amount::text,
+		       d.block_number, d.block_hash, d.status
+		FROM deposits d
+		WHERE d.status = 'credited' AND d.block_number >= $1
+		  AND NOT EXISTS (SELECT 1 FROM deposit_reversals r WHERE r.deposit_id = d.id)
+		ORDER BY d.block_number, d.log_index`
+
+	rows, err := l.pool.Query(ctx, q, minBlock)
+	if err != nil {
+		return nil, fmt.Errorf("credited deposits from %d: %w", minBlock, err)
+	}
+	defer rows.Close()
+
+	var deps []Deposit
+	for rows.Next() {
+		var d Deposit
+		var amount string
+		if err := rows.Scan(&d.ID, &d.UserID, &d.Address, &d.TxHash, &d.LogIndex, &d.Token,
+			&amount, &d.BlockNumber, &d.BlockHash, &d.Status); err != nil {
+			return nil, fmt.Errorf("scan deposit: %w", err)
+		}
+		var ok bool
+		if d.Amount, ok = new(big.Int).SetString(amount, 10); !ok {
+			return nil, fmt.Errorf("deposit %d: bad amount %q", d.ID, amount)
+		}
+		deps = append(deps, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("credited deposits from %d: %w", minBlock, err)
+	}
+	return deps, nil
+}
+
+// ReverseDeposit undoes the credit of deposit id, whose block blockHash was
+// replaced. The deposit row is not changed: a deposit_reversals row is added
+// and the amount is taken from the user's balance, in one transaction. When
+// the balance is less than the amount, nothing is taken and the reversal is
+// saved as 'needs_review' for a person. It returns the reversal's status, or
+// ErrNotCredited when the deposit is not a credited one in blockHash or was
+// already reversed.
+func (l *Ledger) ReverseDeposit(ctx context.Context, id int64, blockHash, reason string) (status string, err error) {
+	tx, err := l.pool.Begin(ctx)
+	if err != nil {
+		return "", fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() // no-op after Commit
+
+	const insert = `
+		INSERT INTO deposit_reversals (deposit_id, user_id, token, amount, reason, status)
+		SELECT id, user_id, token, amount, $3, 'reversed' FROM deposits
+		WHERE id = $1 AND status = 'credited' AND block_hash = $2
+		ON CONFLICT (deposit_id) DO NOTHING`
+
+	tag, err := tx.Exec(ctx, insert, id, blockHash, reason)
+	if err != nil {
+		return "", fmt.Errorf("reverse deposit %d: %w", id, err)
+	}
+	if tag.RowsAffected() != 1 {
+		return "", fmt.Errorf("reverse deposit %d: %w", id, ErrNotCredited)
+	}
+
+	// Conditional like the withdrawal debit: the balance never goes below 0.
+	const debit = `
+		UPDATE balances b SET amount = b.amount - d.amount, updated_at = now()
+		FROM deposits d
+		WHERE d.id = $1 AND b.user_id = d.user_id AND b.token = d.token AND b.amount >= d.amount`
+
+	tag, err = tx.Exec(ctx, debit, id)
+	if err != nil {
+		return "", fmt.Errorf("take back deposit %d: %w", id, err)
+	}
+	status = "reversed"
+	if tag.RowsAffected() != 1 {
+		status = "needs_review"
+		const review = `UPDATE deposit_reversals SET status = 'needs_review', updated_at = now() WHERE deposit_id = $1`
+		if _, err := tx.Exec(ctx, review, id); err != nil {
+			return "", fmt.Errorf("reverse deposit %d: %w", id, err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", fmt.Errorf("commit: %w", err)
+	}
+	return status, nil
 }
