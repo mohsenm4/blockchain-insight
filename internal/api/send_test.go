@@ -314,3 +314,18 @@ func TestPostSendLedgerError(t *testing.T) {
 		t.Errorf("expected sender not to be called")
 	}
 }
+
+func TestPostSendInsufficientBalance(t *testing.T) {
+	f := &fakeSender{}
+	s, lg := newSendTestServer(f)
+	lg.noFunds = true
+
+	w := postSend(s.router, sendOK)
+
+	if w.Code != http.StatusUnprocessableEntity || !strings.Contains(w.Body.String(), "insufficient balance") {
+		t.Errorf("got %d %s, want 422 insufficient balance", w.Code, w.Body.String())
+	}
+	if f.signs != 0 || len(lg.withdrawals) != 0 {
+		t.Errorf("signs = %d, rows = %d; want no tx and no row", f.signs, len(lg.withdrawals))
+	}
+}

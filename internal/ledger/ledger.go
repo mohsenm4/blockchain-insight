@@ -58,6 +58,10 @@ var ErrNotPending = errors.New("deposit not pending")
 // (for example, it was already credited).
 var ErrNotConfirmed = errors.New("deposit not confirmed")
 
+// ErrInsufficientBalance means the user has less of the token than the
+// withdrawal amount.
+var ErrInsufficientBalance = errors.New("insufficient balance")
+
 // uniqueViolation is the Postgres error code for a UNIQUE/PK conflict.
 const uniqueViolation = "23505"
 
@@ -346,22 +350,50 @@ func (l *Ledger) RecordBatch(ctx context.Context, name string, block uint64, dep
 	return inserted, nil
 }
 
-// CreateWithdrawal queues w. created is false when userID already has a
+// CreateWithdrawal queues w and takes its amount from the user's balance,
+// in one transaction. created is false when userID already has a
 // withdrawal with the same idempotency key: nothing is written and id is 0.
+// It returns ErrInsufficientBalance, and writes nothing, when the balance
+// is less than the amount.
 func (l *Ledger) CreateWithdrawal(ctx context.Context, w Withdrawal) (id int64, created bool, err error) {
-	const q = `
+	tx, err := l.pool.Begin(ctx)
+	if err != nil {
+		return 0, false, fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() // no-op after Commit
+
+	const insert = `
 		INSERT INTO withdrawals (user_id, idempotency_key, to_address, token, amount)
 		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (user_id, idempotency_key) DO NOTHING
 		RETURNING id`
 
-	err = l.pool.QueryRow(ctx, q, w.UserID, w.IdempotencyKey, w.To, w.Token, w.Amount).Scan(&id)
+	err = tx.QueryRow(ctx, insert, w.UserID, w.IdempotencyKey, w.To, w.Token, w.Amount).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
-		// DO NOTHING on conflict returns no row: the key was used before.
+		// DO NOTHING on conflict returns no row: the key was used before,
+		// and that first request already took the amount.
 		return 0, false, nil
 	}
 	if err != nil {
 		return 0, false, fmt.Errorf("create withdrawal %d/%s: %w", w.UserID, w.IdempotencyKey, err)
+	}
+
+	// One conditional UPDATE: two withdrawals at the same time can't both
+	// pass the check. The second waits for the row lock, then checks the
+	// new amount.
+	const debit = `
+		UPDATE balances SET amount = amount - $3, updated_at = now()
+		WHERE user_id = $1 AND token = $2 AND amount >= $3`
+
+	tag, err := tx.Exec(ctx, debit, w.UserID, w.Token, w.Amount)
+	if err != nil {
+		return 0, false, fmt.Errorf("debit withdrawal %d: %w", id, err)
+	}
+	if tag.RowsAffected() != 1 {
+		return 0, false, fmt.Errorf("create withdrawal %d/%s: %w", w.UserID, w.IdempotencyKey, ErrInsufficientBalance)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, false, fmt.Errorf("commit: %w", err)
 	}
 	return id, true, nil
 }
@@ -428,19 +460,39 @@ func (l *Ledger) MarkBroadcast(ctx context.Context, id int64, txHash string) err
 }
 
 // MarkFailed records that withdrawal id never sent and never will: it was
-// not signed, or its nonce went to another tx. It moves only a queued or
-// signed row, else it returns ErrNotQueued.
+// not signed, or its nonce went to another tx. It gives the amount back to
+// the user's balance, in the same transaction. It moves only a queued or
+// signed row, else it returns ErrNotQueued, so the amount is given back once.
 func (l *Ledger) MarkFailed(ctx context.Context, id int64) error {
-	const q = `
+	tx, err := l.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() // no-op after Commit
+
+	const fail = `
 		UPDATE withdrawals SET status = 'failed', updated_at = now()
 		WHERE id = $1 AND status IN ('queued', 'signed')`
 
-	tag, err := l.pool.Exec(ctx, q, id)
+	tag, err := tx.Exec(ctx, fail, id)
 	if err != nil {
 		return fmt.Errorf("mark withdrawal %d failed: %w", id, err)
 	}
 	if tag.RowsAffected() != 1 {
 		return fmt.Errorf("mark withdrawal %d failed: %w", id, ErrNotQueued)
+	}
+
+	const refund = `
+		INSERT INTO balances (user_id, token, amount)
+		SELECT user_id, token, amount FROM withdrawals WHERE id = $1
+		ON CONFLICT (user_id, token) DO UPDATE
+		SET amount = balances.amount + EXCLUDED.amount, updated_at = now()`
+
+	if _, err := tx.Exec(ctx, refund, id); err != nil {
+		return fmt.Errorf("give back withdrawal %d: %w", id, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit: %w", err)
 	}
 	return nil
 }

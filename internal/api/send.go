@@ -67,6 +67,10 @@ func (s *Server) PostSend(c *gin.Context) {
 		Amount:         amount,
 	}
 	id, created, err := s.ledger.CreateWithdrawal(ctx, w)
+	if errors.Is(err, ledger.ErrInsufficientBalance) {
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "insufficient balance"})
+		return
+	}
 	if err != nil {
 		slog.Error("create withdrawal", "user_id", req.UserID, "key", req.IdempotencyKey, "err", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not create withdrawal"})

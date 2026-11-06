@@ -22,6 +22,7 @@ type fakeLedger struct {
 	deposits    []ledger.Deposit
 	cursor      map[string]uint64
 	withdrawals []ledger.Withdrawal
+	noFunds     bool  // CreateWithdrawal returns ErrInsufficientBalance for a new key
 	err         error // returned by every call when set
 }
 
@@ -84,6 +85,9 @@ func (f *fakeLedger) CreateWithdrawal(ctx context.Context, w ledger.Withdrawal) 
 	}
 	if _, found, _ := f.WithdrawalByKey(ctx, w.UserID, w.IdempotencyKey); found {
 		return 0, false, nil
+	}
+	if f.noFunds {
+		return 0, false, ledger.ErrInsufficientBalance
 	}
 	w.ID = int64(len(f.withdrawals) + 1)
 	w.Status = "queued"

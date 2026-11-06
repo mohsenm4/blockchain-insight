@@ -3,8 +3,10 @@ package ledger
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math/big"
 	"os"
+	"sync"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -218,17 +220,11 @@ func TestCreateWithdrawalTwice(t *testing.T) {
 
 	l := New(pool)
 	w := Withdrawal{
-		UserID: 1, IdempotencyKey: "test-create-withdrawal-twice",
-		To: "0xabc", Token: "0xtoken", Amount: big.NewInt(1_000_000),
+		UserID: 999003, IdempotencyKey: "test-create-withdrawal-twice",
+		To: "0xabc", Token: testToken, Amount: big.NewInt(1_000_000),
 	}
-
-	deleteRow := func() {
-		if _, err := pool.Exec(ctx, `DELETE FROM withdrawals WHERE idempotency_key = $1`, w.IdempotencyKey); err != nil {
-			t.Errorf("cleanup: %v", err)
-		}
-	}
-	deleteRow()
-	t.Cleanup(deleteRow)
+	cleanupWithdrawals(t, pool, w.UserID)
+	setBalance(t, pool, w.UserID, 1_000_000)
 
 	id, created, err := l.CreateWithdrawal(ctx, w)
 	if err != nil {
@@ -545,5 +541,159 @@ func TestRevertedDepositComesBack(t *testing.T) {
 	want := depositRow{0, "pending", 105, "0xnew", "10"}
 	if got := depositRows(t, pool, d.TxHash); len(got) != 1 || got[0] != want {
 		t.Fatalf("after insert again = %+v, want [%+v]", got, want)
+	}
+}
+
+// testToken is the token of the withdrawal tests' balances.
+const testToken = "0xtoken"
+
+// cleanupWithdrawals deletes the withdrawals and balances of a test user,
+// now and after the test.
+func cleanupWithdrawals(t *testing.T, pool *pgxpool.Pool, userID int64) {
+	t.Helper()
+	clean := func() {
+		for _, q := range []string{
+			`DELETE FROM withdrawals WHERE user_id = $1`,
+			`DELETE FROM balances WHERE user_id = $1`,
+		} {
+			if _, err := pool.Exec(context.Background(), q, userID); err != nil {
+				t.Errorf("cleanup: %v", err)
+			}
+		}
+	}
+	clean()
+	t.Cleanup(clean)
+}
+
+func setBalance(t *testing.T, pool *pgxpool.Pool, userID int64, amount int64) {
+	t.Helper()
+	if _, err := pool.Exec(context.Background(),
+		`INSERT INTO balances (user_id, token, amount) VALUES ($1, $2, $3)`, userID, testToken, amount); err != nil {
+		t.Fatalf("set balance: %v", err)
+	}
+}
+
+func balanceOf(t *testing.T, pool *pgxpool.Pool, userID int64) string {
+	t.Helper()
+	var amount string
+	if err := pool.QueryRow(context.Background(),
+		`SELECT amount::text FROM balances WHERE user_id = $1 AND token = $2`, userID, testToken).Scan(&amount); err != nil {
+		t.Fatalf("read balance: %v", err)
+	}
+	return amount
+}
+
+// A withdrawal takes its amount once, a too-big one writes nothing, and a
+// failed one gives the amount back once.
+func TestWithdrawalBalance(t *testing.T) {
+	ctx := context.Background()
+	pool := testPool(t)
+
+	l := New(pool)
+	const user = 999004
+	cleanupWithdrawals(t, pool, user)
+	setBalance(t, pool, user, 1500)
+
+	first := Withdrawal{UserID: user, IdempotencyKey: "k1", To: "0xabc", Token: testToken, Amount: big.NewInt(1000)}
+	id, created, err := l.CreateWithdrawal(ctx, first)
+	if err != nil || !created {
+		t.Fatalf("1st create: created = %v, err = %v", created, err)
+	}
+	if got := balanceOf(t, pool, user); got != "500" {
+		t.Fatalf("after 1st create: balance = %s, want 500", got)
+	}
+
+	// The same key again: the first request already took the amount.
+	if _, created, err := l.CreateWithdrawal(ctx, first); err != nil || created {
+		t.Fatalf("same key: created = %v, err = %v; want false, nil", created, err)
+	}
+	if got := balanceOf(t, pool, user); got != "500" {
+		t.Fatalf("after same key: balance = %s, want 500", got)
+	}
+
+	second := first
+	second.IdempotencyKey = "k2"
+	if _, _, err := l.CreateWithdrawal(ctx, second); !errors.Is(err, ErrInsufficientBalance) {
+		t.Fatalf("too big: err = %v, want ErrInsufficientBalance", err)
+	}
+	if _, found, err := l.WithdrawalByKey(ctx, user, "k2"); err != nil || found {
+		t.Fatalf("too big: found = %v, err = %v; want no row", found, err)
+	}
+	if got := balanceOf(t, pool, user); got != "500" {
+		t.Fatalf("after too big: balance = %s, want 500", got)
+	}
+
+	if err := l.MarkFailed(ctx, id); err != nil {
+		t.Fatalf("mark failed: %v", err)
+	}
+	if got := balanceOf(t, pool, user); got != "1500" {
+		t.Fatalf("after failed: balance = %s, want 1500", got)
+	}
+	if err := l.MarkFailed(ctx, id); !errors.Is(err, ErrNotQueued) {
+		t.Fatalf("2nd mark failed: err = %v, want ErrNotQueued", err)
+	}
+	if got := balanceOf(t, pool, user); got != "1500" {
+		t.Fatalf("after 2nd failed: balance = %s, want 1500 (given back once)", got)
+	}
+}
+
+// Many withdrawals with different keys, at the same time, and money for
+// only one of them: exactly one is created.
+func TestWithdrawalsRaceForOneBalance(t *testing.T) {
+	ctx := context.Background()
+	pool := testPool(t)
+
+	l := New(pool)
+	const user = 999005
+	cleanupWithdrawals(t, pool, user)
+	setBalance(t, pool, user, 1000)
+
+	// Open the connections first: a goroutine that has to dial a new one
+	// starts too late to race.
+	n := min(int(pool.Config().MaxConns), 8)
+	conns := make([]*pgxpool.Conn, n)
+	for i := range conns {
+		c, err := pool.Acquire(ctx)
+		if err != nil {
+			t.Fatalf("acquire: %v", err)
+		}
+		conns[i] = c
+	}
+	for _, c := range conns {
+		c.Release()
+	}
+
+	start := make(chan struct{})
+	errs := make([]error, n)
+	var wg sync.WaitGroup
+	for i := range errs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			w := Withdrawal{UserID: user, IdempotencyKey: fmt.Sprintf("race-%d", i), To: "0xabc",
+				Token: testToken, Amount: big.NewInt(1000)}
+			_, _, errs[i] = l.CreateWithdrawal(ctx, w)
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	created, short := 0, 0
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			created++
+		case errors.Is(err, ErrInsufficientBalance):
+			short++
+		default:
+			t.Fatalf("create: %v", err)
+		}
+	}
+	if created != 1 || short != n-1 {
+		t.Fatalf("created = %d, insufficient = %d; want 1, %d", created, short, n-1)
+	}
+	if got := balanceOf(t, pool, user); got != "0" {
+		t.Fatalf("balance = %s, want 0", got)
 	}
 }

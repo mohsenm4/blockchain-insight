@@ -126,6 +126,8 @@ If the broadcast transaction fails on-chain:
 
 `broadcast → failed`
 
+**Balance**: the amount leaves `balances` when the row is created (`queued`), in the same transaction, with `UPDATE … WHERE amount >= x`. Two withdrawals at the same time can't both pass this check: the second waits for the row lock, then checks the new amount. Not enough balance → no row at all. Every move to `failed` gives the amount back, in the same transaction as the status change. (Tracking `broadcast → failed` on-chain is not built yet.)
+
 ## Open questions
 
 * Exact confirmation threshold for crediting deposits.
