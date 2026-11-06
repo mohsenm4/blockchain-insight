@@ -87,3 +87,14 @@ func TestFallbackBothFail(t *testing.T) {
 	}
 
 }
+
+// The head always comes from primary: it is never pruned, and asking the
+// archive every poll would cost archive credits.
+func TestFallbackBlockNumberAsksPrimaryOnly(t *testing.T) {
+	primary := &stubSource{}
+	archive := &stubSource{err: errors.New("archive must not be asked")} // asking it fails the test
+
+	if _, err := NewFallbackSource(primary, archive).BlockNumber(context.Background()); err != nil {
+		t.Fatalf("BlockNumber: %v", err)
+	}
+}
