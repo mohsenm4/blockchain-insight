@@ -126,7 +126,7 @@ If the broadcast transaction fails on-chain:
 
 `broadcast → failed`
 
-**Balance**: the amount leaves `balances` when the row is created (`queued`), in the same transaction, with `UPDATE … WHERE amount >= x`. Two withdrawals at the same time can't both pass this check: the second waits for the row lock, then checks the new amount. Not enough balance → no row at all. Every move to `failed` gives the amount back, in the same transaction as the status change. (Tracking `broadcast → failed` on-chain is not built yet.)
+**Balance**: the amount leaves `balances` when the row is created (`queued`), in the same transaction, with `UPDATE … WHERE amount >= x`. Two withdrawals at the same time can't both pass this check: the second waits for the row lock, then checks the new amount. Not enough balance → no row at all. Every move to `failed` gives the amount back, in the same transaction as the status change. A `broadcast` withdrawal is settled from its receipt once its block has `CONFIRMATIONS` blocks on top: status 1 → `confirmed`, status 0 → `failed`, and the amount goes back. A failed tx waits for the confirmations too: after a reorg it could land again and succeed.
 
 ## Open questions
 

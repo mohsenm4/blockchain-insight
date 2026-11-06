@@ -71,6 +71,11 @@ func main() {
 			slog.Info("confirmation tracker stopped", "err", err)
 		}
 	}()
+	go func() {
+		if err := confirm.RunWithdrawals(ctx, confirm.NewEthChain(client), lg, cfg.Confirmations, 10*time.Second); err != nil {
+			slog.Info("withdrawal tracker stopped", "err", err)
+		}
+	}()
 
 	// TODO: Make the server port configurable via environment variable or config file
 	port := ":5050"

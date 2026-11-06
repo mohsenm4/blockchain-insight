@@ -50,6 +50,10 @@ var ErrNotQueued = errors.New("withdrawal not queued")
 // was signed as a different tx.
 var ErrNotSigned = errors.New("withdrawal not signed")
 
+// ErrNotBroadcast means the withdrawal is missing, has already left
+// 'broadcast', or was sent as a different tx.
+var ErrNotBroadcast = errors.New("withdrawal not broadcast")
+
 // ErrNotPending means the deposit is missing, has already left 'pending', or
 // is now in a block with a different hash.
 var ErrNotPending = errors.New("deposit not pending")
@@ -464,22 +468,51 @@ func (l *Ledger) MarkBroadcast(ctx context.Context, id int64, txHash string) err
 // the user's balance, in the same transaction. It moves only a queued or
 // signed row, else it returns ErrNotQueued, so the amount is given back once.
 func (l *Ledger) MarkFailed(ctx context.Context, id int64) error {
+	const fail = `
+		UPDATE withdrawals SET status = 'failed', updated_at = now()
+		WHERE id = $1 AND status IN ('queued', 'signed')`
+
+	if err := l.failWithdrawal(ctx, id, fail); err != nil {
+		return fmt.Errorf("mark withdrawal %d failed: %w", id, err)
+	}
+	return nil
+}
+
+// MarkBroadcastFailed records that tx txHash of withdrawal id is in a block
+// and failed there (receipt status 0): the tokens did not move. It gives the
+// amount back like MarkFailed. It moves only a broadcast row with that hash,
+// else it returns ErrNotBroadcast.
+func (l *Ledger) MarkBroadcastFailed(ctx context.Context, id int64, txHash string) error {
+	const fail = `
+		UPDATE withdrawals SET status = 'failed', updated_at = now()
+		WHERE id = $1 AND status = 'broadcast' AND tx_hash = $2`
+
+	err := l.failWithdrawal(ctx, id, fail, txHash)
+	if errors.Is(err, ErrNotQueued) {
+		err = ErrNotBroadcast
+	}
+	if err != nil {
+		return fmt.Errorf("mark withdrawal %d failed on chain: %w", id, err)
+	}
+	return nil
+}
+
+// failWithdrawal runs fail, an UPDATE to 'failed' with id as $1, and gives
+// the amount back, in one transaction. It returns ErrNotQueued when fail
+// moved no row, so the amount is given back once.
+func (l *Ledger) failWithdrawal(ctx context.Context, id int64, fail string, args ...any) error {
 	tx, err := l.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }() // no-op after Commit
 
-	const fail = `
-		UPDATE withdrawals SET status = 'failed', updated_at = now()
-		WHERE id = $1 AND status IN ('queued', 'signed')`
-
-	tag, err := tx.Exec(ctx, fail, id)
+	tag, err := tx.Exec(ctx, fail, append([]any{id}, args...)...)
 	if err != nil {
-		return fmt.Errorf("mark withdrawal %d failed: %w", id, err)
+		return err
 	}
 	if tag.RowsAffected() != 1 {
-		return fmt.Errorf("mark withdrawal %d failed: %w", id, ErrNotQueued)
+		return ErrNotQueued
 	}
 
 	const refund = `
@@ -489,10 +522,53 @@ func (l *Ledger) MarkFailed(ctx context.Context, id int64) error {
 		SET amount = balances.amount + EXCLUDED.amount, updated_at = now()`
 
 	if _, err := tx.Exec(ctx, refund, id); err != nil {
-		return fmt.Errorf("give back withdrawal %d: %w", id, err)
+		return fmt.Errorf("give back: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit: %w", err)
+	}
+	return nil
+}
+
+// BroadcastWithdrawals returns the withdrawals that are broadcast but not
+// confirmed or failed yet, oldest first. Only ID and TxHash are set.
+func (l *Ledger) BroadcastWithdrawals(ctx context.Context) ([]Withdrawal, error) {
+	const q = `SELECT id, tx_hash FROM withdrawals WHERE status = 'broadcast' ORDER BY id`
+
+	rows, err := l.pool.Query(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("broadcast withdrawals: %w", err)
+	}
+	defer rows.Close()
+
+	var ws []Withdrawal
+	for rows.Next() {
+		var w Withdrawal
+		if err := rows.Scan(&w.ID, &w.TxHash); err != nil {
+			return nil, fmt.Errorf("scan withdrawal: %w", err)
+		}
+		ws = append(ws, w)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("broadcast withdrawals: %w", err)
+	}
+	return ws, nil
+}
+
+// MarkWithdrawalConfirmed records that tx txHash of withdrawal id succeeded
+// and is deep enough in the chain. It moves only a broadcast row with that
+// hash, else it returns ErrNotBroadcast.
+func (l *Ledger) MarkWithdrawalConfirmed(ctx context.Context, id int64, txHash string) error {
+	const q = `
+		UPDATE withdrawals SET status = 'confirmed', updated_at = now()
+		WHERE id = $1 AND status = 'broadcast' AND tx_hash = $2`
+
+	tag, err := l.pool.Exec(ctx, q, id, txHash)
+	if err != nil {
+		return fmt.Errorf("mark withdrawal %d confirmed: %w", id, err)
+	}
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("mark withdrawal %d confirmed: %w", id, ErrNotBroadcast)
 	}
 	return nil
 }

@@ -32,11 +32,11 @@ This is a personal project used to practice production-grade Go. It started as a
 
 - `POST /send` needs an `idempotency_key`. There is one withdrawal row per `(user_id, idempotency_key)`, so the same key never signs a second tx.
 - The amount comes out of `balances` in the same transaction that creates the withdrawal, with `UPDATE … WHERE amount >= x`, so two withdrawals at the same time can't spend the same money. Not enough balance → 422, and nothing is written. A `failed` withdrawal gives the amount back, once.
-- States: `queued` → `signed` → `broadcast`, or `failed` when no tx was sent. The signed tx is saved **before** it is broadcast.
+- States: `queued` → `signed` → `broadcast` → `confirmed`, or `failed` when no tx was sent or the tx failed on chain. The signed tx is saved **before** it is broadcast.
 - If the broadcast fails or is cut off, the service asks the chain whether the tx left, and only ever resends the same signed tx (same nonce), so it pays at most once.
 - The hot wallet's nonce comes from a nonce manager: it reads `PendingNonceAt` once, then counts up in memory under a mutex, and reads it again after a tx that may never reach the network.
 - `GET /tx/:hash` returns `pending`, `mined` or `failed`, from the tx receipt.
-- **Not done yet**: a withdrawal stays `broadcast` — there is no confirmation tracking for withdrawals yet. See the roadmap.
+- **Confirm** — every 10 s, each `broadcast` withdrawal's receipt is read. No receipt: not in a block yet, wait. Once its block has `CONFIRMATIONS` blocks on top: status 1 → `confirmed`; status 0 → `failed`, and the amount goes back to `balances` in the same DB transaction. A failed tx also waits for the confirmations, since after a reorg it could land again and succeed.
 
 ## Status
 
@@ -185,7 +185,7 @@ cmd/tools/           small CLIs from building the pipeline (filter: print Transf
 config/              viper-based config loader
 internal/api/        HTTP server, handlers, cache middleware, watcher start
 internal/watch/      polls ERC20 Transfer logs, falls back to an archive node
-internal/confirm/    confirmations, reorgs, crediting
+internal/confirm/    deposit confirmations, reorgs, crediting; withdrawal settling
 internal/ledger/     Postgres: deposits, cursor, withdrawals, balances
 internal/sender/     signs and broadcasts ERC20 transfers
 internal/nonce/      nonce manager for the hot wallet
@@ -211,7 +211,7 @@ migrations/          goose SQL migrations
 
 ## Roadmap
 
-- Withdrawals: track confirmations, and give the amount back when a tx fails on-chain
+- Withdrawals: detect a dropped tx (never mined, and its nonce taken by another tx). Now it stays `broadcast`.
 - A reorg after `credited`: a reversal row, never an edit of the credited row
 - Redis: a lock for the withdrawal worker, rate limiting, and a "Redis is down" test
 - An own Sepolia node (snap sync) with Prometheus and Grafana; this service uses it, with a fallback

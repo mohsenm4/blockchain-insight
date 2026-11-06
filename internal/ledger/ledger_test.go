@@ -697,3 +697,70 @@ func TestWithdrawalsRaceForOneBalance(t *testing.T) {
 		t.Fatalf("balance = %s, want 0", got)
 	}
 }
+
+// A broadcast withdrawal is confirmed or failed on chain once; failing it
+// gives the amount back once, and only for its own tx hash.
+func TestSettleBroadcastWithdrawal(t *testing.T) {
+	ctx := context.Background()
+	pool := testPool(t)
+
+	l := New(pool)
+	const user = 999006
+	cleanupWithdrawals(t, pool, user)
+	setBalance(t, pool, user, 3000)
+
+	broadcast := func(key, hash string) int64 {
+		t.Helper()
+		w := Withdrawal{UserID: user, IdempotencyKey: key, To: "0xabc", Token: testToken, Amount: big.NewInt(1000)}
+		id, _, err := l.CreateWithdrawal(ctx, w)
+		if err != nil {
+			t.Fatalf("create %s: %v", key, err)
+		}
+		if err := l.MarkSigned(ctx, id, uint64(id), hash, "0x00"); err != nil {
+			t.Fatalf("sign %s: %v", key, err)
+		}
+		if err := l.MarkBroadcast(ctx, id, hash); err != nil {
+			t.Fatalf("broadcast %s: %v", key, err)
+		}
+		return id
+	}
+	ok := broadcast("ok", "0xtest-settle-ok")
+	bad := broadcast("bad", "0xtest-settle-bad")
+
+	ws, err := l.BroadcastWithdrawals(ctx)
+	if err != nil {
+		t.Fatalf("broadcast withdrawals: %v", err)
+	}
+	var mine int
+	for _, w := range ws {
+		if w.ID == ok || w.ID == bad {
+			mine++
+		}
+	}
+	if mine != 2 {
+		t.Fatalf("broadcast withdrawals: found %d of ours, want 2", mine)
+	}
+
+	if err := l.MarkWithdrawalConfirmed(ctx, ok, "0xother"); !errors.Is(err, ErrNotBroadcast) {
+		t.Fatalf("confirm with wrong hash: err = %v, want ErrNotBroadcast", err)
+	}
+	if err := l.MarkWithdrawalConfirmed(ctx, ok, "0xtest-settle-ok"); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+	if err := l.MarkBroadcastFailed(ctx, ok, "0xtest-settle-ok"); !errors.Is(err, ErrNotBroadcast) {
+		t.Fatalf("fail a confirmed one: err = %v, want ErrNotBroadcast", err)
+	}
+	if got := balanceOf(t, pool, user); got != "1000" {
+		t.Fatalf("after confirm: balance = %s, want 1000", got)
+	}
+
+	if err := l.MarkBroadcastFailed(ctx, bad, "0xtest-settle-bad"); err != nil {
+		t.Fatalf("fail: %v", err)
+	}
+	if err := l.MarkBroadcastFailed(ctx, bad, "0xtest-settle-bad"); !errors.Is(err, ErrNotBroadcast) {
+		t.Fatalf("2nd fail: err = %v, want ErrNotBroadcast", err)
+	}
+	if got := balanceOf(t, pool, user); got != "2000" {
+		t.Fatalf("after fail: balance = %s, want 2000 (given back once)", got)
+	}
+}
