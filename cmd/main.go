@@ -16,6 +16,8 @@ import (
 	"github.com/mohsenm4/blockchain-insight/internal/confirm"
 	"github.com/mohsenm4/blockchain-insight/internal/ledger"
 	"github.com/mohsenm4/blockchain-insight/internal/logging"
+	"github.com/mohsenm4/blockchain-insight/internal/ratelimit"
+	"github.com/redis/go-redis/v9"
 )
 
 // @title Blockchain Insight API
@@ -51,8 +53,28 @@ func main() {
 	}
 	slog.Info("db connected")
 
+	var limiter api.RateLimiter // nil interface: no rate limit
+	if cfg.RedisURL == "" {
+		slog.Warn("REDIS_URL not set: POST /send is not rate limited")
+	} else {
+		opt, err := redis.ParseURL(cfg.RedisURL)
+		if err != nil {
+			slog.Error("parse REDIS_URL", "err", err)
+			os.Exit(1)
+		}
+		rdb := redis.NewClient(opt)
+		defer func() { _ = rdb.Close() }()
+
+		if err := rdb.Ping(ctx).Err(); err != nil {
+			slog.Error("ping redis", "err", err)
+			os.Exit(1)
+		}
+		slog.Info("redis connected", "send_limit_per_min", cfg.SendLimit)
+		limiter = ratelimit.New(rdb, "ratelimit:send:", cfg.SendLimit, time.Minute)
+	}
+
 	lg := ledger.New(pool)
-	server := api.NewServer(cfg, lg)
+	server := api.NewServer(cfg, lg, limiter)
 
 	if err := server.StartWatcher(ctx); err != nil {
 		slog.Error("start watcher", "err", err)

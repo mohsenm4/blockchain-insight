@@ -26,11 +26,12 @@ type Server struct {
 	sfGroup singleflight.Group
 	ledger  Ledger
 	sender  Sender
+	limiter RateLimiter // nil: /send is not rate limited
 }
 
 const LastBlock = "last_block"
 
-func NewServer(config config.Config, lg Ledger) *Server {
+func NewServer(config config.Config, lg Ledger, limiter RateLimiter) *Server {
 	client, err := enth.NewClient(config.RPCURL)
 	if err != nil {
 		log.Fatal(err)
@@ -42,11 +43,12 @@ func NewServer(config config.Config, lg Ledger) *Server {
 	}
 	cach := cache.New(cache.NoExpiration, 1*time.Hour)
 	server := &Server{
-		client: client,
-		config: config,
-		cach:   cach,
-		ledger: lg,
-		sender: snd,
+		client:  client,
+		config:  config,
+		cach:    cach,
+		ledger:  lg,
+		sender:  snd,
+		limiter: limiter,
 	}
 
 	server.setupRouter()

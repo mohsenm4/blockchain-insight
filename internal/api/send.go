@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"math"
 	"math/big"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -22,6 +24,12 @@ type Sender interface {
 	Check(ctx context.Context, tx *types.Transaction) (sender.TxState, error)
 	ResetNonce()
 	Status(ctx context.Context, hash common.Hash) (string, error)
+}
+
+// RateLimiter counts requests per key. ok is false when the key is over
+// its limit; retryAfter is then the time until it may try again.
+type RateLimiter interface {
+	Allow(ctx context.Context, key string) (ok bool, retryAfter time.Duration, err error)
 }
 
 type sendRequest struct {
@@ -44,6 +52,10 @@ func (s *Server) PostSend(c *gin.Context) {
 	var req sendRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(400, gin.H{"error": err.Error()})
+		return
+	}
+
+	if !s.allowSend(c, req.UserID) {
 		return
 	}
 
@@ -116,6 +128,28 @@ func (s *Server) PostSend(c *gin.Context) {
 	}
 	s.markBroadcast(ctx, id, tx)
 	c.JSON(http.StatusOK, withdrawalResponse{ID: id, Status: "broadcast", TxHash: tx.Hash().Hex()})
+}
+
+// allowSend counts this request against the user's limit. When it returns
+// false, it has already answered: 429, or 503 if Redis could not be asked.
+// Retries with the same idempotency key count too.
+func (s *Server) allowSend(c *gin.Context, userID int64) bool {
+	if s.limiter == nil {
+		return true
+	}
+	ok, retryAfter, err := s.limiter.Allow(c.Request.Context(), strconv.FormatInt(userID, 10))
+	if err != nil {
+		// For now a Redis error refuses the request.
+		slog.Error("rate limit", "user_id", userID, "err", err)
+		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "rate limit unavailable, retry later"})
+		return false
+	}
+	if !ok {
+		c.Header("Retry-After", strconv.Itoa(int(math.Ceil(retryAfter.Seconds()))))
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": "too many requests, retry later"})
+		return false
+	}
+	return true
 }
 
 // settleSigned answers for a signed withdrawal whose broadcast failed or

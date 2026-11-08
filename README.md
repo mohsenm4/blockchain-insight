@@ -37,13 +37,14 @@ This is a personal project used to practice production-grade Go. It started as a
 - If the broadcast fails or is cut off, the service asks the chain whether the tx left, and only ever resends the same signed tx (same nonce), so it pays at most once.
 - The hot wallet's nonce comes from a nonce manager: it reads `PendingNonceAt` once, then counts up in memory under a mutex, and reads it again after a tx that may never reach the network.
 - `GET /tx/:hash` returns `pending`, `mined` or `failed`, from the tx receipt.
+- **Rate limit** — with `REDIS_URL` set, each user gets `SEND_LIMIT` requests to `POST /send` per minute (default 5). Over the limit → 429 with `Retry-After`, before any row is written. Retries with the same key count too.
 - **Confirm** — every 10 s, each `broadcast` withdrawal's receipt is read. No receipt: not in a block yet, wait. Once its block has `CONFIRMATIONS` blocks on top: status 1 → `confirmed`; status 0 → `failed`, and the amount goes back to `balances` in the same DB transaction. A failed tx also waits for the confirmations, since after a reorg it could land again and succeed.
 
 ## Status
 
 Actively developed. Runs against Sepolia. `v2.0.0` is the deposit and withdrawal pipeline above.
 
-CI runs `go vet`, golangci-lint, and the tests with the race detector. The ledger tests need Postgres (`TEST_DATABASE_URL`), so they are skipped in CI.
+CI runs `go vet`, golangci-lint, and the tests with the race detector. The ledger tests need Postgres (`TEST_DATABASE_URL`) and the rate limit tests need Redis (`TEST_REDIS_URL`), so they are skipped in CI.
 
 ## Endpoints
 
@@ -54,7 +55,7 @@ CI runs `go vet`, golangci-lint, and the tests with the race detector. The ledge
 | GET    | `/balance/:address`         | ETH balance of an address in wei.                                           |
 | POST   | `/watch`                    | Assign a deposit address to a user: `{"address", "user_id"}`. 409 if taken. |
 | GET    | `/watch/:address/transfers` | Deposits recorded for an address, from Postgres. A reversed one shows `reversed` or `needs_review`. |
-| POST   | `/send`                     | Send tokens: `{"user_id", "idempotency_key", "to", "amount"}`. Same key never signs a second tx (it may resend the first one if its state is unknown); 409 while in progress, 422 if reused for a different request or if the balance is too low. |
+| POST   | `/send`                     | Send tokens: `{"user_id", "idempotency_key", "to", "amount"}`. Same key never signs a second tx (it may resend the first one if its state is unknown); 409 while in progress, 422 if reused for a different request or if the balance is too low, 429 over the rate limit. |
 | GET    | `/tx/:hash`                 | Status of a sent transaction.                                               |
 | GET    | `/swagger/*`                | Swagger UI for the API (only with the `swagger` build tag).                 |
 | GET    | `/debug/pprof/*`            | Go profiling (only when `ENABLE_PPROF=true`).                               |
@@ -63,12 +64,13 @@ CI runs `go vet`, golangci-lint, and the tests with the race detector. The ledge
 
 - Go 1.25 or newer
 - Postgres 16 (`docker-compose.yml` has one) and [goose](https://github.com/pressly/goose) for the migrations
+- Redis 7, for the `/send` rate limit (`docker-compose.yml` has one). Optional: without `REDIS_URL` there is no rate limit.
 - An Ethereum **Sepolia** JSON-RPC endpoint (the watcher follows Sepolia USDC)
 - A Sepolia hot wallet with test ETH and tokens, for `/send`
 
 ## Configuration
 
-The server reads `app.env` from the project root (the file must exist). An environment variable with the same name overrides a key from the file — this is how Docker Compose points `DATABASE_URL` at the `postgres` container.
+The server reads `app.env` from the project root (the file must exist). An environment variable with the same name overrides a key from the file — this is how Docker Compose points `DATABASE_URL` at the `postgres` container and `REDIS_URL` at the `redis` one.
 
 ```bash
 cp app.env.example app.env
@@ -83,6 +85,8 @@ cp app.env.example app.env
 | `ARCHIVE_RPC_URL` | no         | Archive node, asked only when `RPC_URL` fails (for example, pruned old blocks)   |
 | `CONFIRMATIONS`   | no         | Blocks on top of a deposit before it is confirmed (default 12)                   |
 | `FINALITY`        | no         | Blocks after which a credited deposit is no longer checked for a reorg (default 64) |
+| `REDIS_URL`       | no         | Redis for the `/send` rate limit, e.g. `redis://localhost:6380/0`. Unset: no rate limit. Set but not reachable at start: the server exits. |
+| `SEND_LIMIT`      | no         | `POST /send` requests per user per minute (default 5)                            |
 
 Two settings are read only from the environment, not from `app.env`:
 
@@ -178,6 +182,17 @@ Run the ledger tests against it:
 TEST_DATABASE_URL="postgres://insight:insight@localhost:5433/ledger?sslmode=disable" go test ./internal/ledger/
 ```
 
+## Redis
+
+`docker-compose.yml` runs Redis 7 for the `/send` rate limit. The host port is **6380**, not 6379, so it does not clash with a local Redis. There is no volume: a counter lives one minute, so losing it on a restart is fine.
+
+Run the rate limit tests against it:
+
+```bash
+docker compose up -d redis
+TEST_REDIS_URL="redis://localhost:6380/0" go test ./internal/ratelimit/
+```
+
 ## Project layout
 
 ```text
@@ -191,6 +206,7 @@ internal/confirm/    deposit confirmations, reorgs, crediting, reversals; withdr
 internal/ledger/     Postgres: deposits, cursor, withdrawals, balances
 internal/sender/     signs and broadcasts ERC20 transfers
 internal/nonce/      nonce manager for the hot wallet
+internal/ratelimit/  per-user request counter in Redis (fixed window)
 internal/enth/       Ethereum client wrapper (go-ethereum)
 internal/contracts/  ERC20 bindings (abigen)
 internal/logging/    slog setup (JSON in production)
@@ -207,6 +223,7 @@ migrations/          goose SQL migrations
 - **A balance is spent once**: the withdrawal row and the debit are one transaction, and the debit is `UPDATE balances … WHERE amount >= x`. A second withdrawal waits for the row lock, then checks the new amount.
 - **Two facts, two statuses**: `confirmed` is a chain fact, `credited` is a money fact. Each step credits first, then confirms, so a deposit left `confirmed` by a crash is credited the next time.
 - **Sign → save → broadcast**: the signed tx is in the database before it goes to the network, so after a crash the service knows which tx may have left.
+- **Rate limit**: a fixed window per user. `INCR` counts, `EXPIRE … NX` starts the window at the first request, and both run in one `MULTI`, so a crash can't leave a counter without a TTL (that user would be blocked forever).
 - **Cache**: `patrickmn/go-cache` in front of `/last/block`. TTL trades staleness for RPC cost.
 - **Cache stampede**: guarded by `golang.org/x/sync/singleflight` so a single expired key does not fan out N concurrent RPC calls.
 - **Testing**: the chain and the store are interfaces (`EthClient`, `watch.Source`, `confirm.Chain`, `confirm.Store`), so the logic is tested against fakes without a real node. The race detector runs on every CI build.
@@ -214,7 +231,7 @@ migrations/          goose SQL migrations
 ## Roadmap
 
 - Withdrawals: detect a dropped tx (never mined, and its nonce taken by another tx). Now it stays `broadcast`.
-- Redis: a lock for the withdrawal worker, rate limiting, and a "Redis is down" test
+- Redis: a lock for the withdrawal worker, and a "Redis is down" test (today a Redis error refuses `/send` with 503)
 - An own Sepolia node (snap sync) with Prometheus and Grafana; this service uses it, with a fallback
 - The watched token (Sepolia USDC) from config instead of code
 - Docker Compose with everything: app, Postgres, Redis, node
