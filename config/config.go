@@ -14,6 +14,8 @@ type Config struct {
 	TokenAddress  string `mapstructure:"token_address"`
 	PrivateKey    string `mapstructure:"private_key"`
 	DatabaseURL   string `mapstructure:"database_url"`
+	RedisURL      string `mapstructure:"redis_url"`
+	SendLimit     int64  `mapstructure:"send_limit"`
 	Confirmations uint64 `mapstructure:"confirmations"`
 	Finality      uint64 `mapstructure:"finality"`
 }
@@ -30,6 +32,8 @@ func LoadConfig(path string) (config Config, err error) {
 	viper.AutomaticEnv()
 	viper.SetDefault("confirmations", 12) // Sepolia; also lets CONFIRMATIONS come from env only
 	viper.SetDefault("finality", 64)      // two epochs: a block this deep is final
+	viper.SetDefault("redis_url", "")     // optional; also lets REDIS_URL come from env only
+	viper.SetDefault("send_limit", 5)     // POST /send requests per user per minute
 
 	if err = viper.ReadInConfig(); err != nil {
 		return
