@@ -5,49 +5,224 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    # Mondays: new vulnerabilities and the live Sepolia test, even with no push
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Same minor as go.mod and the dockerfile. check-latest takes the newest
+  # patch, so standard library security fixes arrive without a commit.
+  GO_VERSION: "1.26"
+  GOLANGCI_LINT_VERSION: v2.14.0
+  GOOSE_VERSION: v3.28.0
+  SWAG_VERSION: v1.16.4
+  # Floor for coverage of our own code (generated bindings, docs and cmd
+  # excluded). Raise it as tests grow; the phase 1 goal is 80.
+  MIN_COVERAGE: "65"
+
 jobs:
-  lint:
-    name: Lint
+  modules:
+    name: Modules, build, vet
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
-          cache: true
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+
+      - name: go.mod and go.sum are tidy
+        run: go mod tidy -diff
+
+      - name: Downloaded modules match go.sum
+        run: go mod verify
+
+      - name: Build
+        run: |
+          go build ./...
+          go build -tags swagger ./...
+
+      - name: Vet
+        run: |
+          go vet ./...
+          go vet -tags swagger ./...
+
+      - name: Swagger docs match the handlers
+        run: |
+          go run github.com/swaggo/swag/cmd/swag@${SWAG_VERSION} init -g cmd/main.go -o docs
+          git diff --exit-code docs || {
+            echo "::error::docs/ is stale: run 'swag init -g cmd/main.go -o docs' and commit it"
+            exit 1
+          }
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v8
         with:
-          version: v2.14.0
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+
+      - name: golangci-lint (swagger build tag)
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: ${{ env.GOLANGCI_LINT_VERSION }}
+          args: --build-tags=swagger
 
   test:
-    name: Test
+    name: Test (Postgres + Redis)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: insight
+          POSTGRES_PASSWORD: insight
+          POSTGRES_DB: ledger
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U insight -d ledger"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://insight:insight@localhost:5432/ledger?sslmode=disable
+      TEST_REDIS_URL: redis://localhost:6379/0
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
-          cache: true
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
 
-      - name: Download modules
-        run: go mod download
+      - name: Install goose
+        run: go install github.com/pressly/goose/v3/cmd/goose@${GOOSE_VERSION}
 
-      - name: Vet
-        run: go vet ./...
+      # Every Down must undo its Up: up, all the way down, up again.
+      - name: Migrations up, down, up
+        run: |
+          goose -dir migrations postgres "$TEST_DATABASE_URL" up
+          goose -dir migrations postgres "$TEST_DATABASE_URL" reset
+          goose -dir migrations postgres "$TEST_DATABASE_URL" up
+          goose -dir migrations postgres "$TEST_DATABASE_URL" status
 
+      # -short skips tests that need the internet (Sepolia); the live job
+      # runs those. -shuffle finds tests that depend on each other's order.
       - name: Test with race detector and coverage
-        run: go test -race -covermode=atomic -coverprofile=coverage.out ./...
+        run: go test -race -shuffle=on -count=1 -short -covermode=atomic -coverprofile=coverage.out ./...
 
-      - name: Upload coverage artifact
+      # The ledger and rate limit tests skip themselves without their URL.
+      # Here they must run: a skip means the setup above is broken.
+      - name: Postgres and Redis tests ran
+        run: |
+          if go test -count=1 -short -v ./internal/ledger/ ./internal/ratelimit/ | grep -- '--- SKIP'; then
+            echo "::error::integration tests were skipped"
+            exit 1
+          fi
+
+      - name: Coverage floor
+        run: |
+          # Leave out abigen bindings, swag docs and main: not our logic.
+          grep -v -E '/internal/contracts/|/docs/|/cmd/' coverage.out > coverage.own.out
+          total=$(go tool cover -func=coverage.own.out | awk '/^total:/ { sub("%", "", $3); print $3 }')
+          echo "Coverage of our code: ${total}% (floor ${MIN_COVERAGE}%)" | tee -a "$GITHUB_STEP_SUMMARY"
+          awk -v t="$total" -v min="$MIN_COVERAGE" 'BEGIN { exit (t + 0 < min + 0) }' || {
+            echo "::error::coverage ${total}% is below the floor of ${MIN_COVERAGE}%"
+            exit 1
+          }
+
+      - name: Upload coverage
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage
-          path: coverage.out
+          path: coverage*.out
+          if-no-files-found: ignore
+
+  vulncheck:
+    name: Vulnerabilities
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # Fails only on vulnerable code our code really calls.
+      - uses: golang/govulncheck-action@v1
+        with:
+          go-version-input: ${{ env.GO_VERSION }}
+          check-latest: true
+          go-package: ./...
+
+  docker:
+    name: Docker
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compose file is valid
+        run: docker compose config -q
+
+      - name: Build the image
+        run: docker build -t blockchain-insight:ci .
+
+      # No app.env in the image, so the server must start and stop at
+      # "load config". That proves the binary runs on the runtime image.
+      - name: The binary starts
+        run: |
+          set +e
+          out=$(docker run --rm blockchain-insight:ci 2>&1)
+          code=$?
+          set -e
+          echo "$out"
+          if [ "$code" -ne 1 ] || ! echo "$out" | grep -q "load config"; then
+            echo "::error::expected exit 1 at 'load config', got exit $code"
+            exit 1
+          fi
+
+  live:
+    name: Live Sepolia test
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+
+      - name: Test against Sepolia
+        run: go test -count=1 -run Live -v ./internal/contracts/erc20/

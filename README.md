@@ -44,7 +44,7 @@ This is a personal project used to practice production-grade Go. It started as a
 
 Actively developed. Runs against Sepolia. `v2.0.0` is the deposit and withdrawal pipeline above.
 
-CI runs `go vet`, golangci-lint, and the tests with the race detector. The ledger tests need Postgres (`TEST_DATABASE_URL`) and the rate limit tests need Redis (`TEST_REDIS_URL`), so they are skipped in CI.
+CI checks that `go.mod` is tidy, builds and vets with and without the `swagger` tag, checks that `docs/` matches the handlers, and runs golangci-lint. The tests run with the race detector and shuffled order against real Postgres 16 and Redis 7, after the migrations go up, all the way down, and up again; a skipped ledger or rate limit test fails the build, and so does coverage under the floor. It also runs govulncheck, builds the Docker image and starts it once. Every Monday it runs again, with the live Sepolia test.
 
 ## Endpoints
 
