@@ -139,7 +139,9 @@ func (s *Server) allowSend(c *gin.Context, userID int64) bool {
 	}
 	ok, retryAfter, err := s.limiter.Allow(c.Request.Context(), strconv.FormatInt(userID, 10))
 	if err != nil {
-		// For now a Redis error refuses the request.
+		// Fail closed: if a Redis error let the request through, anyone
+		// who could take Redis down would switch the limit off. Nothing
+		// is written yet, so the client can simply retry.
 		slog.Error("rate limit", "user_id", userID, "err", err)
 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "rate limit unavailable, retry later"})
 		return false

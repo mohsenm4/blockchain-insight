@@ -8,6 +8,11 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// Timeout bounds one Allow call. Asking Redis takes a millisecond or two;
+// when it is down or hangs, the caller gets an error after Timeout instead
+// of waiting for go-redis's own timeouts and retries (seconds).
+const Timeout = 200 * time.Millisecond
+
 // Limiter allows at most limit requests per key in each window.
 type Limiter struct {
 	rdb    *redis.Client
@@ -16,20 +21,37 @@ type Limiter struct {
 	window time.Duration
 }
 
+// NewClient returns a client for the Redis at url (redis://host:port/db).
+// It obeys context deadlines, so Timeout also cuts a read that hangs:
+// go-redis ignores them by default and waits ReadTimeout (5s) on every
+// retry, which held a request for 40s.
+func NewClient(url string) (*redis.Client, error) {
+	opt, err := redis.ParseURL(url)
+	if err != nil {
+		return nil, err
+	}
+	opt.ContextTimeoutEnabled = true
+	return redis.NewClient(opt), nil
+}
+
 // New returns a Limiter whose keys start with prefix. window is rounded
 // down to whole seconds (EXPIRE works in seconds), so it must be >= 1s.
+// rdb should come from NewClient, or Timeout cannot cut a hanging read.
 func New(rdb *redis.Client, prefix string, limit int64, window time.Duration) *Limiter {
 	return &Limiter{rdb: rdb, prefix: prefix, limit: limit, window: window}
 }
 
 // Allow counts one request for key. When the limit is reached, it returns
-// false and how long until the window ends.
+// false and how long until the window ends. When Redis cannot answer
+// within Timeout, it returns an error.
 //
 // The window starts at the first request: INCR creates the counter and
 // EXPIRE NX gives it a TTL only if it has none. Both run in one MULTI, so a
 // crash between them cannot leave a counter that never expires (that user
 // would be blocked forever).
 func (l *Limiter) Allow(ctx context.Context, key string) (ok bool, retryAfter time.Duration, err error) {
+	ctx, cancel := context.WithTimeout(ctx, Timeout)
+	defer cancel()
 	k := l.prefix + key
 
 	var incr *redis.IntCmd

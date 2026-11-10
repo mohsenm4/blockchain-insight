@@ -17,7 +17,6 @@ import (
 	"github.com/mohsenm4/blockchain-insight/internal/ledger"
 	"github.com/mohsenm4/blockchain-insight/internal/logging"
 	"github.com/mohsenm4/blockchain-insight/internal/ratelimit"
-	"github.com/redis/go-redis/v9"
 )
 
 // @title Blockchain Insight API
@@ -57,19 +56,23 @@ func main() {
 	if cfg.RedisURL == "" {
 		slog.Warn("REDIS_URL not set: POST /send is not rate limited")
 	} else {
-		opt, err := redis.ParseURL(cfg.RedisURL)
+		rdb, err := ratelimit.NewClient(cfg.RedisURL)
 		if err != nil {
 			slog.Error("parse REDIS_URL", "err", err)
 			os.Exit(1)
 		}
-		rdb := redis.NewClient(opt)
 		defer func() { _ = rdb.Close() }()
 
-		if err := rdb.Ping(ctx).Err(); err != nil {
-			slog.Error("ping redis", "err", err)
-			os.Exit(1)
+		// A bad URL stops the service, but Redis being down does not:
+		// deposits and reads do not need it, and POST /send answers 503
+		// until it is back (go-redis reconnects by itself).
+		pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		if err := rdb.Ping(pingCtx).Err(); err != nil {
+			slog.Warn("redis unreachable: POST /send answers 503 until it is back", "err", err)
+		} else {
+			slog.Info("redis connected", "send_limit_per_min", cfg.SendLimit)
 		}
-		slog.Info("redis connected", "send_limit_per_min", cfg.SendLimit)
+		cancel()
 		limiter = ratelimit.New(rdb, "ratelimit:send:", cfg.SendLimit, time.Minute)
 	}
 

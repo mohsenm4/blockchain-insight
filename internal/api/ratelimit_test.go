@@ -3,10 +3,13 @@ package api
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/mohsenm4/blockchain-insight/internal/ratelimit"
 )
 
 // fakeLimiter allows limit requests per key, with no window.
@@ -97,5 +100,37 @@ func TestPostSendBadRequestNotCounted(t *testing.T) {
 	}
 	if len(lim.calls) != 0 {
 		t.Errorf("limiter calls = %v, want none", lim.calls)
+	}
+}
+
+// A real Limiter on a Redis that hangs: POST /send answers 503 in about
+// ratelimit.Timeout. No crash, no request held for seconds, no withdrawal.
+func TestPostSendRedisHangs(t *testing.T) {
+	// Takes connections and never answers (no Accept, nothing reads).
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	rdb, err := ratelimit.NewClient("redis://" + ln.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	f := &fakeSender{}
+	s, lg := newSendTestServer(f)
+	s.limiter = ratelimit.New(rdb, "ratelimit:send:", 5, time.Minute)
+
+	start := time.Now()
+	w := postSend(s.router, sendOK)
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("POST /send took %v, want about %v", elapsed, ratelimit.Timeout)
+	}
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("code = %d, want 503: %s", w.Code, w.Body)
+	}
+	if f.signs != 0 || len(lg.withdrawals) != 0 {
+		t.Errorf("signs, rows = %d, %d, want 0, 0", f.signs, len(lg.withdrawals))
 	}
 }

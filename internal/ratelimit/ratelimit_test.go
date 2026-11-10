@@ -3,6 +3,7 @@ package ratelimit
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"testing"
 	"time"
@@ -17,11 +18,10 @@ func testRedis(t *testing.T) *redis.Client {
 	if url == "" {
 		t.Skip("TEST_REDIS_URL not set") // CI has no redis
 	}
-	opt, err := redis.ParseURL(url)
+	rdb, err := NewClient(url)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rdb := redis.NewClient(opt)
 	t.Cleanup(func() { _ = rdb.Close() })
 	if err := rdb.Ping(context.Background()).Err(); err != nil {
 		t.Fatal(err)
@@ -130,5 +130,62 @@ func TestLaterRequestsKeepTheWindowEnd(t *testing.T) {
 	}
 	if retryAfter > time.Second {
 		t.Fatalf("retryAfter = %v, want <= 1s: the window was extended", retryAfter)
+	}
+}
+
+// refusedAddr returns a local address where nothing listens, so a connect
+// is refused: a stopped Redis.
+func refusedAddr(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	_ = ln.Close()
+	return addr
+}
+
+// hangingAddr returns a local address that takes connections and never
+// answers: a Redis that is frozen, or a broken network path. The kernel
+// completes the connect without Accept; nothing ever reads or replies.
+func hangingAddr(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ln.Close() })
+	return ln.Addr().String()
+}
+
+// Redis down must give an error in about Timeout. Without it, go-redis
+// retries a refused connect for ~3s and waits ReadTimeout (5s) on a hang.
+func TestAllowRedisDown(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		addr string
+	}{
+		{"refused", refusedAddr(t)},
+		{"hangs", hangingAddr(t)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rdb, err := NewClient("redis://" + tc.addr)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = rdb.Close() })
+			l := New(rdb, "test:", 5, time.Minute)
+
+			start := time.Now()
+			ok, _, err := l.Allow(context.Background(), "1")
+			elapsed := time.Since(start)
+			if err == nil || ok {
+				t.Fatalf("ok=%v err=%v, want an error", ok, err)
+			}
+			if elapsed > time.Second {
+				t.Fatalf("Allow took %v, want about %v", elapsed, Timeout)
+			}
+		})
 	}
 }
