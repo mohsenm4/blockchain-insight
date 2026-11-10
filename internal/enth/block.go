@@ -16,7 +16,7 @@ func (c *Client) GetLastBlockNumber() (uint64, error) {
 }
 
 func (c *Client) GetBlockByNumber(blockNumber uint64) (*models.Block, error) {
-	block, err := c.Eth.BlockByNumber(context.Background(), big.NewInt(int64(blockNumber)))
+	block, err := c.Eth.BlockByNumber(context.Background(), new(big.Int).SetUint64(blockNumber))
 	if err != nil {
 		return nil, err
 	}

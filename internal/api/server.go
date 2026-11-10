@@ -5,7 +5,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
-	_ "net/http/pprof"
+	_ "net/http/pprof" //nolint:gosec // G108: routed only when ENABLE_PPROF=true, see setupRouter
 	"os"
 	"time"
 
@@ -82,7 +82,13 @@ func (s *Server) setupRouter() {
 
 // Start serves HTTP until ctx is cancelled, then shuts down gracefully.
 func (s *Server) Start(ctx context.Context, addr string) error {
-	srv := &http.Server{Addr: addr, Handler: s.router}
+	srv := &http.Server{
+		Addr:    addr,
+		Handler: s.router,
+		// A client that sends its headers slowly must not hold a
+		// connection forever (Slowloris).
+		ReadHeaderTimeout: 10 * time.Second,
+	}
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -97,9 +103,9 @@ func (s *Server) Start(ctx context.Context, addr string) error {
 	case err := <-errCh:
 		return err
 	case <-ctx.Done():
-		// NOT ctx: it is already cancelled. Shutdown needs its own deadline
-		// to let in-flight requests finish.
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		// ctx is already cancelled. Shutdown needs its own deadline to let
+		// in-flight requests finish.
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
 		return srv.Shutdown(shutdownCtx)
 	}

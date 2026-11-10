@@ -12,6 +12,26 @@ linters:
     - unconvert
     - unparam
     - unused
+    # bugs in money and SQL code
+    - bodyclose
+    - contextcheck
+    - durationcheck
+    - errchkjson
+    - errorlint
+    - gocritic
+    - gosec
+    - makezero
+    - nilerr
+    - noctx
+    - rowserrcheck
+    - sqlclosecheck
+    - wastedassign
+  settings:
+    gocritic:
+      disabled-checks:
+        # main and cmd/tools exit on a startup error; skipping their defers
+        # (signal.NotifyContext's stop) does no harm there
+        - exitAfterDefer
   exclusions:
     generated: lax
     presets:
@@ -19,6 +39,14 @@ linters:
       - common-false-positives
       - legacy
       - std-error-handling
+    rules:
+      # tests build requests and listeners without a context, convert small
+      # known numbers, and their fake servers may ignore write errors
+      - path: _test\.go
+        linters:
+          - errchkjson
+          - gosec
+          - noctx
     paths:
       - docs
       - third_party$

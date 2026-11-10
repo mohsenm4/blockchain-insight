@@ -597,6 +597,7 @@ func (l *Ledger) MarkCredited(ctx context.Context, id int64, head uint64) error 
 	}
 	defer func() { _ = tx.Rollback(ctx) }() // no-op after Commit
 
+	//nolint:gosec // G101: SQL, not a credential
 	const credit = `
 		UPDATE deposits
 		SET status = 'credited', credited_at_block = $2, updated_at = now()
