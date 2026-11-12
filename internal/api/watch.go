@@ -11,6 +11,7 @@ import (
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/gin-gonic/gin"
 	"github.com/mohsenm4/blockchain-insight/internal/contracts/erc20"
+	"github.com/mohsenm4/blockchain-insight/internal/enth"
 	"github.com/mohsenm4/blockchain-insight/internal/ledger"
 	"github.com/mohsenm4/blockchain-insight/internal/watch"
 )
@@ -107,7 +108,7 @@ const watcherName = "erc20:" + sepoliaUSDC
 // after the block saved in the cursor, or from the current head on the
 // first run.
 func (s *Server) StartWatcher(ctx context.Context) error {
-	client, err := ethclient.DialContext(ctx, s.config.RPCURL)
+	client, err := enth.Dial(ctx, s.config.RPCURL, s.config.RPCTimeout())
 	if err != nil {
 		return err
 	}
@@ -121,7 +122,7 @@ func (s *Server) StartWatcher(ctx context.Context) error {
 
 	var archiveClient *ethclient.Client // stays nil when no archive is set
 	if s.config.ArchiveRPCURL != "" {
-		archiveClient, err = ethclient.DialContext(ctx, s.config.ArchiveRPCURL)
+		archiveClient, err = enth.Dial(ctx, s.config.ArchiveRPCURL, s.config.RPCTimeout())
 		if err != nil {
 			client.Close()
 			return err

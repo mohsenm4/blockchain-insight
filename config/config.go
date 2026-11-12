@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"time"
 
 	"github.com/spf13/viper"
 )
@@ -23,6 +24,14 @@ type Config struct {
 var ErrMissingRPCURL = errors.New("RPC_URL must be set (via app.env or environment)")
 var ErrMissingPrivateKey = errors.New("PRIVATE_KEY must be set (via app.env or environment)")
 var ErrMissingDatabaseURL = errors.New("DATABASE_URL must be set (via app.env or environment)")
+var ErrBadTimeout = errors.New("TIMEOUT_SEC must be more than 0")
+
+// RPCTimeout is the longest one RPC call may take. A node that takes the
+// request and never answers gives an error after it, instead of holding
+// the caller forever.
+func (c Config) RPCTimeout() time.Duration {
+	return time.Duration(c.TimeoutSec) * time.Second
+}
 
 func LoadConfig(path string) (config Config, err error) {
 	viper.AddConfigPath(path)
@@ -34,6 +43,7 @@ func LoadConfig(path string) (config Config, err error) {
 	viper.SetDefault("finality", 64)      // two epochs: a block this deep is final
 	viper.SetDefault("redis_url", "")     // optional; also lets REDIS_URL come from env only
 	viper.SetDefault("send_limit", 5)     // POST /send requests per user per minute
+	viper.SetDefault("timeout_sec", 10)   // one RPC call
 
 	if err = viper.ReadInConfig(); err != nil {
 		return
@@ -55,6 +65,11 @@ func LoadConfig(path string) (config Config, err error) {
 
 	if config.DatabaseURL == "" {
 		err = ErrMissingDatabaseURL
+		return
+	}
+
+	if config.TimeoutSec <= 0 {
+		err = ErrBadTimeout
 		return
 	}
 

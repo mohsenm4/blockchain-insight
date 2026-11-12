@@ -8,12 +8,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/mohsenm4/blockchain-insight/config"
 	"github.com/mohsenm4/blockchain-insight/internal/api"
 	"github.com/mohsenm4/blockchain-insight/internal/confirm"
+	"github.com/mohsenm4/blockchain-insight/internal/enth"
 	"github.com/mohsenm4/blockchain-insight/internal/ledger"
 	"github.com/mohsenm4/blockchain-insight/internal/logging"
 	"github.com/mohsenm4/blockchain-insight/internal/ratelimit"
@@ -77,14 +77,14 @@ func main() {
 	}
 
 	lg := ledger.New(pool)
-	server := api.NewServer(cfg, lg, limiter)
+	server := api.NewServer(ctx, cfg, lg, limiter)
 
 	if err := server.StartWatcher(ctx); err != nil {
 		slog.Error("start watcher", "err", err)
 		os.Exit(1)
 	}
 
-	client, err := ethclient.DialContext(ctx, cfg.RPCURL)
+	client, err := enth.Dial(ctx, cfg.RPCURL, cfg.RPCTimeout())
 	if err != nil {
 		slog.Error("dial rpc for confirmations", "err", err)
 		os.Exit(1)

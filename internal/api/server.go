@@ -31,13 +31,16 @@ type Server struct {
 
 const LastBlock = "last_block"
 
-func NewServer(config config.Config, lg Ledger, limiter RateLimiter) *Server {
-	client, err := enth.NewClient(config.RPCURL)
+// NewServer asks the node for its chain ID, so it waits for the node (at
+// most config.RPCTimeout) or for ctx.
+func NewServer(ctx context.Context, config config.Config, lg Ledger, limiter RateLimiter) *Server {
+	eth, err := enth.Dial(ctx, config.RPCURL, config.RPCTimeout())
 	if err != nil {
 		log.Fatal(err)
 	}
+	client := &enth.Client{Eth: eth}
 
-	snd, err := sender.NewERC20Sender(context.Background(), client.Eth, config.TokenAddress, config.PrivateKey)
+	snd, err := sender.NewERC20Sender(ctx, client.Eth, config.TokenAddress, config.PrivateKey)
 	if err != nil {
 		log.Fatal(err)
 	}

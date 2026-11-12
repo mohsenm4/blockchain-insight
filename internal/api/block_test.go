@@ -18,7 +18,7 @@ func TestGetLastBlock_Error(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := enth.NewClient(server.URL)
+	client, err := enth.NewClient(server.URL, 5*time.Second)
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
@@ -76,7 +76,7 @@ func TestGetBlockById_InvalidNumber(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := enth.NewClient(server.URL)
+	client, err := enth.NewClient(server.URL, 5*time.Second)
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestGetBlockById_Error(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := enth.NewClient(server.URL)
+	client, err := enth.NewClient(server.URL, 5*time.Second)
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}

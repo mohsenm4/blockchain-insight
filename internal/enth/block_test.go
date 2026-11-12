@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestGetLastBlockNumber(t *testing.T) {
@@ -17,7 +18,7 @@ func TestGetLastBlockNumber(t *testing.T) {
 
 	defer server.Close()
 
-	client, err := NewClient(server.URL)
+	client, err := NewClient(server.URL, 5*time.Second)
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
@@ -39,7 +40,7 @@ func TestGetLastBlockNumber_Error(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewClient(server.URL)
+	client, err := NewClient(server.URL, 5*time.Second)
 	if err != nil {
 		t.Fatalf("NewClient failed: %v", err)
 	}
@@ -59,7 +60,7 @@ func TestGetBlockByNumber_Error(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewClient(server.URL)
+	client, err := NewClient(server.URL, 5*time.Second)
 	if err != nil {
 		t.Fatalf("NewClient failed: %v", err)
 	}

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -40,7 +41,7 @@ func TestGetTxByHash(t *testing.T) {
 
 	defer server.Close()
 
-	client, err := NewClient(server.URL)
+	client, err := NewClient(server.URL, 5*time.Second)
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
@@ -72,7 +73,7 @@ func TestGetTxByHash_Error(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewClient(server.URL)
+	client, err := NewClient(server.URL, 5*time.Second)
 	if err != nil {
 		t.Fatalf("NewClient failed: %v", err)
 	}

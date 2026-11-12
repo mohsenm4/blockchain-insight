@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestGetBalance(t *testing.T) {
@@ -17,7 +18,7 @@ func TestGetBalance(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewClient(server.URL)
+	client, err := NewClient(server.URL, 5*time.Second)
 	if err != nil {
 		t.Fatalf("NewClient failed: %v", err)
 	}
@@ -41,7 +42,7 @@ func TestGetBalance_Error(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := NewClient(server.URL)
+	client, err := NewClient(server.URL, 5*time.Second)
 	if err != nil {
 		t.Fatalf("NewClient failed: %v", err)
 	}
@@ -55,7 +56,7 @@ func TestGetBalance_Error(t *testing.T) {
 	}
 }
 func TestNewClient_InvalidURL(t *testing.T) {
-	_, err := NewClient("this-is-not-a-valid-url")
+	_, err := NewClient("this-is-not-a-valid-url", 5*time.Second)
 	if err == nil {
 		t.Error("expected error for invalid URL, got nil")
 	}

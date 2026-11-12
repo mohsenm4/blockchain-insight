@@ -83,6 +83,7 @@ cp app.env.example app.env
 | `DATABASE_URL`    | yes        | Postgres connection string                                                       |
 | `TOKEN_ADDRESS`   | for `/send`| The ERC20 contract that `/send` transfers                                        |
 | `ARCHIVE_RPC_URL` | no         | Archive node, asked only when `RPC_URL` fails (for example, pruned old blocks)   |
+| `TIMEOUT_SEC`     | no         | Seconds one RPC call may take (default 10). A node that takes the request and never answers gives an error after it, so the watcher and the trackers log it and retry (the watcher also asks the archive node), instead of waiting forever |
 | `CONFIRMATIONS`   | no         | Blocks on top of a deposit before it is confirmed (default 12)                   |
 | `FINALITY`        | no         | Blocks after which a credited deposit is no longer checked for a reorg (default 64) |
 | `REDIS_URL`       | no         | Redis for the `/send` rate limit, e.g. `redis://localhost:6380/0`. Unset: no rate limit. Set but not reachable at start: the server exits. |

@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/mohsenm4/blockchain-insight/internal/enth"
 )
@@ -18,7 +19,7 @@ func TestGetAddressBalance(t *testing.T) {
 
 	defer server.Close()
 
-	client, err := enth.NewClient(server.URL)
+	client, err := enth.NewClient(server.URL, 5*time.Second)
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
@@ -49,7 +50,7 @@ func TestGetAddressBalance_Error(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := enth.NewClient(server.URL)
+	client, err := enth.NewClient(server.URL, 5*time.Second)
 	if err != nil {
 		t.Fatalf("Failed to create client: %v", err)
 	}
