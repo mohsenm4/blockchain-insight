@@ -37,7 +37,7 @@ This is a personal project used to practice production-grade Go. It started as a
 - If the broadcast fails or is cut off, the service asks the chain whether the tx left, and only ever resends the same signed tx (same nonce), so it pays at most once.
 - The hot wallet's nonce comes from a nonce manager: it reads `PendingNonceAt` once, then counts up in memory under a mutex, and reads it again after a tx that may never reach the network.
 - `GET /tx/:hash` returns `pending`, `mined` or `failed`, from the tx receipt.
-- **Rate limit** — with `REDIS_URL` set, each user gets `SEND_LIMIT` requests to `POST /send` per minute (default 5). Over the limit → 429 with `Retry-After`, before any row is written. Retries with the same key count too.
+- **Rate limit** — with `REDIS_URL` set, each user gets `SEND_LIMIT` requests to `POST /send` per minute (default 5). Over the limit → 429 with `Retry-After`, before any row is written. Retries with the same key count too. Redis down or hanging → 503 within 200 ms, also before any row is written.
 - **Confirm** — every 10 s, each `broadcast` withdrawal's receipt is read. No receipt: not in a block yet, wait. Once its block has `CONFIRMATIONS` blocks on top: status 1 → `confirmed`; status 0 → `failed`, and the amount goes back to `balances` in the same DB transaction. A failed tx also waits for the confirmations, since after a reorg it could land again and succeed.
 
 ## Status
@@ -86,7 +86,7 @@ cp app.env.example app.env
 | `TIMEOUT_SEC`     | no         | Seconds one RPC call may take (default 10). A node that takes the request and never answers gives an error after it, so the watcher and the trackers log it and retry (the watcher also asks the archive node), instead of waiting forever |
 | `CONFIRMATIONS`   | no         | Blocks on top of a deposit before it is confirmed (default 12)                   |
 | `FINALITY`        | no         | Blocks after which a credited deposit is no longer checked for a reorg (default 64) |
-| `REDIS_URL`       | no         | Redis for the `/send` rate limit, e.g. `redis://localhost:6380/0`. Unset: no rate limit. Set but not reachable at start: the server exits. |
+| `REDIS_URL`       | no         | Redis for the `/send` rate limit, e.g. `redis://localhost:6380/0`. Unset: no rate limit. A bad URL stops the server; Redis down, at start or later, does not: `POST /send` answers 503 until it is back. |
 | `SEND_LIMIT`      | no         | `POST /send` requests per user per minute (default 5)                            |
 
 Two settings are read only from the environment, not from `app.env`:
@@ -225,6 +225,8 @@ migrations/          goose SQL migrations
 - **Two facts, two statuses**: `confirmed` is a chain fact, `credited` is a money fact. Each step credits first, then confirms, so a deposit left `confirmed` by a crash is credited the next time.
 - **Sign → save → broadcast**: the signed tx is in the database before it goes to the network, so after a crash the service knows which tx may have left.
 - **Rate limit**: a fixed window per user. `INCR` counts, `EXPIRE … NX` starts the window at the first request, and both run in one `MULTI`, so a crash can't leave a counter without a TTL (that user would be blocked forever).
+- **Redis down → fail closed**: `/send` answers 503 instead of skipping the limit. Failing open would let anyone who can take Redis down switch the limit off, and a 503 can be retried, while tokens that left on chain cannot come back. Each check gives up after 200 ms: the client obeys context deadlines (`ContextTimeoutEnabled`); without that, go-redis waits its own read timeout on every retry, and a Redis that hangs held each `/send` for 40 s.
+- **A hung node is an error**: every RPC call gives up after `TIMEOUT_SEC`. A node that takes the request and never answers gives no error by itself, so without the timeout the watcher and the trackers waited on one call forever, even after the node came back, without a log line, and the archive fallback never ran.
 - **Cache**: `patrickmn/go-cache` in front of `/last/block`. TTL trades staleness for RPC cost.
 - **Cache stampede**: guarded by `golang.org/x/sync/singleflight` so a single expired key does not fan out N concurrent RPC calls.
 - **Testing**: the chain and the store are interfaces (`EthClient`, `watch.Source`, `confirm.Chain`, `confirm.Store`), so the logic is tested against fakes without a real node. The race detector runs on every CI build.
@@ -232,7 +234,7 @@ migrations/          goose SQL migrations
 ## Roadmap
 
 - Withdrawals: detect a dropped tx (never mined, and its nonce taken by another tx). Now it stays `broadcast`.
-- Redis: a lock for the withdrawal worker, and a "Redis is down" test (today a Redis error refuses `/send` with 503)
+- Redis: a lock for the withdrawal worker
 - An own Sepolia node (snap sync) with Prometheus and Grafana; this service uses it, with a fallback
 - The watched token (Sepolia USDC) from config instead of code
 - Docker Compose with everything: app, Postgres, Redis, node
