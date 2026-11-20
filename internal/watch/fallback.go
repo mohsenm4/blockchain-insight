@@ -26,7 +26,7 @@ func (s FallbackSource) Transfers(ctx context.Context, from, to uint64) ([]Trans
 	if err == nil {
 		return res, nil
 	}
-	slog.Warn("primary failed", "from", from, "to", to, "err", err)
+	slog.Warn("primary failed", "from", from, "to", to, "err", safeRPCError(err))
 
 	archiveRes, archiveErr := s.archive.Transfers(ctx, from, to)
 	if archiveErr != nil {

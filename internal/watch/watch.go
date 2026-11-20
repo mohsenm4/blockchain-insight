@@ -46,14 +46,14 @@ func Run(ctx context.Context, src Source, last uint64, interval time.Duration, h
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			slog.Warn("get block number", "err", err)
+			slog.Warn("get block number", "err", safeRPCError(err))
 		} else if head > last {
 			to := min(head, last+maxBlockRange)
 			if err := process(ctx, src, last+1, to, handle); err != nil {
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
-				slog.Warn("process blocks", "from", last+1, "to", to, "err", err)
+				slog.Warn("process blocks", "from", last+1, "to", to, "err", safeRPCError(err))
 			} else {
 				last = to
 				if last < head {
