@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/mohsenm4/blockchain-insight/internal/logging"
 	"log"
 	"os"
 	"os/signal"
@@ -25,26 +26,26 @@ func main() {
 
 	config, err := config.LoadConfig("../../")
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal(logging.SafeError(err))
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	client, err := ethclient.DialContext(ctx, sepoliaRPC)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal(logging.SafeError(err))
 	}
 	defer client.Close()
 
 	token, err := erc20.NewERC20(common.HexToAddress(config.TokenAddress), client)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal(logging.SafeError(err))
 	}
 
 	src := watch.NewERC20Source(client, token)
 	head, err := src.BlockNumber(ctx)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal(logging.SafeError(err))
 	}
 
 	printBatch := func(ctx context.Context, b watch.Batch) error {
@@ -56,6 +57,6 @@ func main() {
 	}
 
 	if err := watch.Run(ctx, src, head, 10*time.Second, printBatch); err != nil {
-		log.Println("watcher stopped:", err)
+		log.Println("watcher stopped:", logging.SafeError(err))
 	}
 }

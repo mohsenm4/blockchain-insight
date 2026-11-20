@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/mohsenm4/blockchain-insight/internal/logging"
 	"log"
 	"math/big"
 	"os"
@@ -21,7 +22,7 @@ import (
 func main() {
 	cfg, err := config.LoadConfig("../../")
 	if err != nil {
-		log.Fatalf("load config: %v", err)
+		log.Fatalf("load config: %v", logging.SafeError(err))
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -29,32 +30,32 @@ func main() {
 
 	client, err := ethclient.DialContext(ctx, cfg.RPCURL)
 	if err != nil {
-		log.Fatalf("dial RPC: %v", err)
+		log.Fatalf("dial RPC: %v", logging.SafeError(err))
 	}
 	defer client.Close()
 
 	chainID, err := client.ChainID(ctx)
 	if err != nil {
-		log.Fatalf("get chain ID: %v", err)
+		log.Fatalf("get chain ID: %v", logging.SafeError(err))
 	}
 
 	prv := strings.TrimPrefix(cfg.PrivateKey, "0x")
 
 	key, err := crypto.HexToECDSA(prv)
 	if err != nil {
-		log.Fatalf("parse private key: %v", err)
+		log.Fatalf("parse private key: %v", logging.SafeError(err))
 	}
 
 	auth, err := bind.NewKeyedTransactorWithChainID(key, chainID)
 	if err != nil {
-		log.Fatalf("create transactor: %v", err)
+		log.Fatalf("create transactor: %v", logging.SafeError(err))
 	}
 
 	auth.Context = ctx
 
 	token, err := erc20.NewERC20(common.HexToAddress(cfg.TokenAddress), client)
 	if err != nil {
-		log.Fatalf("create token instance: %v", err)
+		log.Fatalf("create token instance: %v", logging.SafeError(err))
 	}
 
 	to := common.HexToAddress("0xb958BbF92100a04ab37CB00Ae1E6c1aA0f3B6CA9")
@@ -62,7 +63,7 @@ func main() {
 
 	tx, err := token.Transfer(auth, to, amount)
 	if err != nil {
-		log.Fatalf("transfer tokens: %v", err)
+		log.Fatalf("transfer tokens: %v", logging.SafeError(err))
 	}
 
 	fmt.Println("Transaction nonce:", tx.Nonce())

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"github.com/mohsenm4/blockchain-insight/internal/logging"
 	"log/slog"
 	"math"
 	"math/big"
@@ -98,7 +99,7 @@ func (s *Server) PostSend(c *gin.Context) {
 	tx, err := s.sender.Sign(ctx, common.HexToAddress(req.To), amount)
 	if err != nil {
 		// Nothing was signed, so nothing left.
-		slog.Error("sign", "withdrawal", id, "err", err)
+		slog.Error("sign", "withdrawal", id, "err", logging.SafeError(err))
 		s.markFailed(ctx, id)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "transfer failed", "id": id, "status": "failed"})
 		return
@@ -119,7 +120,7 @@ func (s *Server) PostSend(c *gin.Context) {
 	// The tx may reach the node even if this request is cancelled now.
 	ctx = context.WithoutCancel(ctx)
 	if err := s.sender.Broadcast(ctx, tx); err != nil {
-		slog.Warn("broadcast", "withdrawal", id, "tx", tx.Hash().Hex(), "err", err)
+		slog.Warn("broadcast", "withdrawal", id, "tx", tx.Hash().Hex(), "err", logging.SafeError(err))
 		// Next Sign reads the nonce from the chain; if this tx lands
 		// after all, the chain counts it.
 		s.sender.ResetNonce()
@@ -161,7 +162,7 @@ func (s *Server) settleSigned(c *gin.Context, id int64, tx *types.Transaction) {
 	ctx := context.WithoutCancel(c.Request.Context())
 	hash := tx.Hash().Hex()
 	unknown := func(err error) {
-		slog.Error("settle withdrawal", "withdrawal", id, "tx", hash, "err", err)
+		slog.Error("settle withdrawal", "withdrawal", id, "tx", hash, "err", logging.SafeError(err))
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "transfer state unknown, retry with the same key", "id": id, "status": "signed", "tx_hash": hash,
 		})
@@ -266,7 +267,7 @@ func (s *Server) GetTx(c *gin.Context) {
 
 	status, err := s.sender.Status(c.Request.Context(), common.HexToHash(h))
 	if err != nil {
-		slog.Error("tx status", "hash", h, "err", err)
+		slog.Error("tx status", "hash", h, "err", logging.SafeError(err))
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "status lookup failed"})
 		return
 	}

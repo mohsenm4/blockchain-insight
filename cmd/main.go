@@ -35,19 +35,19 @@ func main() {
 
 	cfg, err := config.LoadConfig(".")
 	if err != nil {
-		slog.Error("load config", "err", err)
+		slog.Error("load config", "err", logging.SafeError(err))
 		os.Exit(1)
 	}
 
 	pool, err := pgxpool.New(ctx, cfg.DatabaseURL)
 	if err != nil {
-		slog.Error("connect to db", "err", err)
+		slog.Error("connect to db", "err", logging.SafeError(err))
 		os.Exit(1)
 	}
 	defer pool.Close()
 
 	if err := pool.Ping(ctx); err != nil {
-		slog.Error("ping db", "err", err)
+		slog.Error("ping db", "err", logging.SafeError(err))
 		os.Exit(1)
 	}
 	slog.Info("db connected")
@@ -58,7 +58,7 @@ func main() {
 	} else {
 		rdb, err := ratelimit.NewClient(cfg.RedisURL)
 		if err != nil {
-			slog.Error("parse REDIS_URL", "err", err)
+			slog.Error("parse REDIS_URL", "err", logging.SafeError(err))
 			os.Exit(1)
 		}
 		defer func() { _ = rdb.Close() }()
@@ -68,7 +68,7 @@ func main() {
 		// until it is back (go-redis reconnects by itself).
 		pingCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		if err := rdb.Ping(pingCtx).Err(); err != nil {
-			slog.Warn("redis unreachable: POST /send answers 503 until it is back", "err", err)
+			slog.Warn("redis unreachable: POST /send answers 503 until it is back", "err", logging.SafeError(err))
 		} else {
 			slog.Info("redis connected", "send_limit_per_min", cfg.SendLimit)
 		}
@@ -80,30 +80,30 @@ func main() {
 	server := api.NewServer(ctx, cfg, lg, limiter)
 
 	if err := server.StartWatcher(ctx); err != nil {
-		slog.Error("start watcher", "err", err)
+		slog.Error("start watcher", "err", logging.SafeError(err))
 		os.Exit(1)
 	}
 
 	client, err := enth.Dial(ctx, cfg.RPCURL, cfg.RPCTimeout())
 	if err != nil {
-		slog.Error("dial rpc for confirmations", "err", err)
+		slog.Error("dial rpc for confirmations", "err", logging.SafeError(err))
 		os.Exit(1)
 	}
 	defer client.Close()
 	slog.Info("confirmation tracker starting", "confirmations", cfg.Confirmations)
 	go func() {
 		if err := confirm.Run(ctx, confirm.NewEthChain(client), lg, cfg.Confirmations, 10*time.Second); err != nil {
-			slog.Info("confirmation tracker stopped", "err", err)
+			slog.Info("confirmation tracker stopped", "err", logging.SafeError(err))
 		}
 	}()
 	go func() {
 		if err := confirm.RunWithdrawals(ctx, confirm.NewEthChain(client), lg, cfg.Confirmations, 10*time.Second); err != nil {
-			slog.Info("withdrawal tracker stopped", "err", err)
+			slog.Info("withdrawal tracker stopped", "err", logging.SafeError(err))
 		}
 	}()
 	go func() {
 		if err := confirm.RunReversals(ctx, confirm.NewEthChain(client), lg, cfg.Finality, 10*time.Second); err != nil {
-			slog.Info("reversal tracker stopped", "err", err)
+			slog.Info("reversal tracker stopped", "err", logging.SafeError(err))
 		}
 	}()
 
@@ -111,7 +111,7 @@ func main() {
 	port := ":5050"
 	slog.Info("server starting", "addr", port, "env", env)
 	if err := server.Start(ctx, port); err != nil {
-		slog.Error("server exited", "err", err)
+		slog.Error("server exited", "err", logging.SafeError(err))
 		os.Exit(1)
 	}
 }

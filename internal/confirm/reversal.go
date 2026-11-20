@@ -3,6 +3,7 @@ package confirm
 import (
 	"context"
 	"errors"
+	"github.com/mohsenm4/blockchain-insight/internal/logging"
 	"log/slog"
 	"time"
 
@@ -27,7 +28,7 @@ func RunReversals(ctx context.Context, chain Chain, store ReversalStore, finalit
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			slog.Warn("check credited deposits", "err", err)
+			slog.Warn("check credited deposits", "err", logging.SafeError(err))
 		}
 
 		select {

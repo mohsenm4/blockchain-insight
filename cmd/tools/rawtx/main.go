@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"github.com/mohsenm4/blockchain-insight/internal/logging"
 	"log"
 	"math/big"
 	"os"
@@ -22,7 +23,7 @@ import (
 func main() {
 	cfg, err := config.LoadConfig("../../")
 	if err != nil {
-		log.Fatalf("load config: %v", err)
+		log.Fatalf("load config: %v", logging.SafeError(err))
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -30,37 +31,37 @@ func main() {
 
 	client, err := ethclient.DialContext(ctx, cfg.RPCURL)
 	if err != nil {
-		log.Fatalf("dial RPC: %v", err)
+		log.Fatalf("dial RPC: %v", logging.SafeError(err))
 	}
 	defer client.Close()
 
 	chainID, err := client.ChainID(ctx)
 	if err != nil {
-		log.Fatalf("get chain ID: %v", err)
+		log.Fatalf("get chain ID: %v", logging.SafeError(err))
 	}
 
 	prv := strings.TrimPrefix(cfg.PrivateKey, "0x")
 
 	key, err := crypto.HexToECDSA(prv)
 	if err != nil {
-		log.Fatalf("parse private key: %v", err)
+		log.Fatalf("parse private key: %v", logging.SafeError(err))
 	}
 
 	from := crypto.PubkeyToAddress(key.PublicKey)
 
 	nonce, err := client.PendingNonceAt(ctx, from)
 	if err != nil {
-		log.Fatalf("get nonce: %v", err)
+		log.Fatalf("get nonce: %v", logging.SafeError(err))
 	}
 
 	tip, err := client.SuggestGasTipCap(ctx)
 	if err != nil {
-		log.Fatalf("get gas tip cap: %v", err)
+		log.Fatalf("get gas tip cap: %v", logging.SafeError(err))
 	}
 
 	header, err := client.HeaderByNumber(ctx, nil)
 	if err != nil {
-		log.Fatalf("get latest block header: %v", err)
+		log.Fatalf("get latest block header: %v", logging.SafeError(err))
 	}
 
 	fee := new(big.Int).Mul(header.BaseFee, big.NewInt(2))
@@ -68,7 +69,7 @@ func main() {
 
 	abi, err := erc20.ERC20MetaData.GetAbi()
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal(logging.SafeError(err))
 	}
 
 	to := common.HexToAddress("0xb958BbF92100a04ab37CB00Ae1E6c1aA0f3B6CA9")
@@ -76,13 +77,13 @@ func main() {
 
 	data, err := abi.Pack("transfer", to, amount)
 	if err != nil {
-		log.Fatalf("pack data: %v", err)
+		log.Fatalf("pack data: %v", logging.SafeError(err))
 	}
 
 	token := common.HexToAddress(cfg.TokenAddress)
 	gas, err := client.EstimateGas(ctx, ethereum.CallMsg{From: from, To: &token, Data: data})
 	if err != nil {
-		log.Fatalf("estimate gas: %v", err)
+		log.Fatalf("estimate gas: %v", logging.SafeError(err))
 	}
 
 	tx := types.NewTx(&types.DynamicFeeTx{
@@ -98,12 +99,12 @@ func main() {
 
 	signedTx, err := types.SignTx(tx, types.NewLondonSigner(chainID), key)
 	if err != nil {
-		log.Fatalf("sign tx: %v", err)
+		log.Fatalf("sign tx: %v", logging.SafeError(err))
 	}
 
 	err = client.SendTransaction(ctx, signedTx)
 	if err != nil {
-		log.Fatalf("send transaction: %v", err)
+		log.Fatalf("send transaction: %v", logging.SafeError(err))
 	}
 
 	fmt.Println("signed tx hash:", signedTx.Hash().Hex())

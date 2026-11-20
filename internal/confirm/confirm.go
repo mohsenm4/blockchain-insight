@@ -5,6 +5,7 @@ package confirm
 import (
 	"context"
 	"errors"
+	"github.com/mohsenm4/blockchain-insight/internal/logging"
 	"log/slog"
 	"math/big"
 	"time"
@@ -43,7 +44,7 @@ func Run(ctx context.Context, chain Chain, store Store, confirmations uint64, in
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			slog.Warn("confirm deposits", "err", err)
+			slog.Warn("confirm deposits", "err", logging.SafeError(err))
 		}
 
 		select {
