@@ -21,15 +21,42 @@ type WithdrawalStore interface {
 	MarkBroadcastFailed(ctx context.Context, id int64, txHash string) error
 }
 
-// RunWithdrawals calls StepWithdrawals every interval until ctx is
-// cancelled. It returns ctx.Err() on cancellation.
-func RunWithdrawals(ctx context.Context, chain Chain, store WithdrawalStore, confirmations uint64, interval time.Duration) error {
+// WithdrawalLocker prevents multiple application instances from
+// processing the withdrawal confirmation queue simultaneously.
+type WithdrawalLocker interface {
+	Do(context.Context, func(context.Context) error) (bool, error)
+}
+
+// RunWithdrawals calls StepWithdrawals every interval while holding
+// the distributed lock. It fails closed when no locker is configured.
+func RunWithdrawals(
+	ctx context.Context,
+	chain Chain,
+	store WithdrawalStore,
+	locker WithdrawalLocker,
+	confirmations uint64,
+	interval time.Duration,
+) error {
+	if locker == nil {
+		return errors.New("withdrawal distributed lock is required")
+	}
+	if interval <= 0 {
+		return errors.New("withdrawal interval must be positive")
+	}
+
 	for {
-		if _, err := StepWithdrawals(ctx, chain, store, confirmations); err != nil {
+		acquired, err := locker.Do(ctx, func(lockCtx context.Context) error {
+			_, err := StepWithdrawals(lockCtx, chain, store, confirmations)
+			return err
+		})
+
+		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
 			slog.Warn("confirm withdrawals", "err", logging.SafeError(err))
+		} else if !acquired {
+			slog.Debug("withdrawal confirmation skipped: another instance holds the lock")
 		}
 
 		select {

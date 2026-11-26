@@ -17,6 +17,7 @@ import (
 	"github.com/mohsenm4/blockchain-insight/internal/ledger"
 	"github.com/mohsenm4/blockchain-insight/internal/logging"
 	"github.com/mohsenm4/blockchain-insight/internal/ratelimit"
+	"github.com/mohsenm4/blockchain-insight/internal/redislock"
 )
 
 // @title Blockchain Insight API
@@ -53,8 +54,10 @@ func main() {
 	slog.Info("db connected")
 
 	var limiter api.RateLimiter // nil interface: no rate limit
+	var withdrawalLock confirm.WithdrawalLocker
 	if cfg.RedisURL == "" {
 		slog.Warn("REDIS_URL not set: POST /send is not rate limited")
+		slog.Warn("REDIS_URL not set: withdrawal confirmation tracker is disabled")
 	} else {
 		rdb, err := ratelimit.NewClient(cfg.RedisURL)
 		if err != nil {
@@ -62,6 +65,17 @@ func main() {
 			os.Exit(1)
 		}
 		defer func() { _ = rdb.Close() }()
+
+		withdrawalLock, err = redislock.New(
+			rdb,
+			"blockchain-insight:withdrawals:confirmation",
+			30*time.Second,
+			10*time.Second,
+		)
+		if err != nil {
+			slog.Error("configure withdrawal distributed lock", "err", logging.SafeError(err))
+			os.Exit(1)
+		}
 
 		// A bad URL stops the service, but Redis being down does not:
 		// deposits and reads do not need it, and POST /send answers 503
@@ -96,11 +110,22 @@ func main() {
 			slog.Info("confirmation tracker stopped", "err", logging.SafeError(err))
 		}
 	}()
-	go func() {
-		if err := confirm.RunWithdrawals(ctx, confirm.NewEthChain(client), lg, cfg.Confirmations, 10*time.Second); err != nil {
-			slog.Info("withdrawal tracker stopped", "err", logging.SafeError(err))
-		}
-	}()
+	if withdrawalLock == nil {
+		slog.Warn("withdrawal tracker disabled: distributed lock is required")
+	} else {
+		go func() {
+			if err := confirm.RunWithdrawals(
+				ctx,
+				confirm.NewEthChain(client),
+				lg,
+				withdrawalLock,
+				cfg.Confirmations,
+				10*time.Second,
+			); err != nil {
+				slog.Info("withdrawal tracker stopped", "err", logging.SafeError(err))
+			}
+		}()
+	}
 	go func() {
 		if err := confirm.RunReversals(ctx, confirm.NewEthChain(client), lg, cfg.Finality, 10*time.Second); err != nil {
 			slog.Info("reversal tracker stopped", "err", logging.SafeError(err))
